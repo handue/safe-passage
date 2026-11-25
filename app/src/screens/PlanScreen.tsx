@@ -11,7 +11,7 @@ import { Icon } from '../ui/Icon';
 import { Tag, fmtMin, fmtT } from '../ui/Tag';
 import { fmtDist, fmtSpeed, unitsFor } from '../ui/units';
 import { DISCLAIMER } from '../ui/Shell';
-import { wayOutName } from './ResultsScreen';
+import { dataSources, wayOutName } from './ResultsScreen';
 import '../styles/plan.css';
 
 const ONE_WAY_OUT_MIN_M = 200; // same threshold the drill uses for the "one way out" bottleneck
@@ -393,8 +393,8 @@ export function PlanScreen() {
   const meetPlaceholder = mainDest?.kind === 'exit_point' ? 'Choose a place everyone knows' : undefined;
   const meet2Placeholder = !usable ? 'Agree on a spot together' : backupDest?.kind === 'exit_point' ? 'Choose a second place everyone knows' : undefined;
   const today = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-  const sources = area ? Object.keys(area.fetchedAt) : [];
   const wind = (latest?.setup.wind ?? state.setup.wind);
+  const sources = area ? dataSources(area, wind, state.isDemo) : '';
 
   const writtenTag = ai ? <Tag kind="ai" /> : null;
   // The first section says how long it usually takes and counts the seconds; the others just wait.
@@ -518,7 +518,7 @@ export function PlanScreen() {
           </div>
         </div>
         <p className="how-data">
-          Data: {sources.length > 0 ? sources.join('; ') : 'OpenStreetMap'}. Routing: our own fastest-time search on the OpenStreetMap roads, no traffic.
+          Data: {sources || 'OpenStreetMap'}. Routing: our own fastest-time search on the OpenStreetMap roads, no traffic.
           {' '}The plan writer got road names, times, task names, destination types (like "D1 School") and household counts only. Tasks you added were sent as "Another task", and place names were added back here.
         </p>
         {area && area.fallbacksUsed.length > 0 && (
