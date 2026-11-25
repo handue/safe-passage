@@ -11,7 +11,8 @@ let close: (() => void) | null = null;
 afterEach(() => { close?.(); close = null; });
 
 async function serve(fetcher: Fetcher, demoFile: string, extra: ServerOptions = {}): Promise<string> {
-  const server = startServer(0, { fetcher, demoFile, cacheDir: await mkdtemp(path.join(tmpdir(), 'sp-idx-')), ...extra });
+  const overpassTiming = { budgetMs: 8000, primaryMs: 1000, mirrorMs: 1000, retryCapMs: 20, retryDefaultMs: 10 };
+  const server = startServer(0, { fetcher, demoFile, cacheDir: await mkdtemp(path.join(tmpdir(), 'sp-idx-')), overpassTiming, ...extra });
   await new Promise((r) => server.once('listening', r));
   close = () => server.close();
   return `http://localhost:${(server.address() as AddressInfo).port}`;
@@ -29,7 +30,7 @@ describe('server', () => {
     try {
       const plan = await fetch(`${base}/api/plan`, { method: 'POST', body: JSON.stringify({ household: { adults: 1 }, main: { roadNames: ['A Rd'], driveMin: 5, destination: 'D1 School' } }) });
       expect(plan.status).toBe(200);
-      expect((await plan.json()).source).toBe('fallback');
+      expect(((await plan.json()) as { source: string }).source).toBe('fallback');
     } finally {
       if (saved !== undefined) process.env.MODEL_API_KEY = saved;
     }
@@ -42,7 +43,47 @@ describe('server', () => {
     const base = await serve(down, '/nonexistent/demo.json');
     const res = await fetch(`${base}/api/area?lat=37&lon=-122`);
     expect(res.status).toBe(503);
-    expect(await res.json()).toEqual({ error: 'roads_unavailable' });
+    expect(await res.json()).toEqual({ error: 'roads_unavailable', reason: 'failed' });
+  });
+
+  it('geocode: too long, rejected, unavailable, and clean labels', async () => {
+    const long = await serve(down, '/nonexistent/demo.json');
+    const tooLong = await fetch(`${long}/api/geocode?q=${'a'.repeat(201)}`);
+    expect(tooLong.status).toBe(400);
+    expect(((await tooLong.json()) as { error: string }).error).toBe('query_too_long');
+    const outage = await fetch(`${long}/api/geocode?q=somewhere`);
+    expect(outage.status).toBe(502);
+    expect(await outage.json()).toEqual({ error: 'geocode_unavailable' });
+    close?.();
+
+    const rejected = await serve(async () => new Response('bad request', { status: 400 }), '/nonexistent/demo.json');
+    const r = await fetch(`${rejected}/api/geocode?q=somewhere`);
+    expect(r.status).toBe(400);
+    expect(await r.json()).toEqual({ error: 'query_rejected' });
+  });
+
+  it('area-status reports each part, keyed by the client', async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => { release = r; });
+    const fetcher: Fetcher = async (url, init) => {
+      if (url.includes('overpass')) { await gate; return overpassOk(init); }
+      return completeFetcher(url, init);
+    };
+    const base = await serve(fetcher, '/nonexistent/demo.json');
+    expect((await fetch(`${base}/api/area-status?key=nope`)).status).toBe(404);
+    const area = fetch(`${base}/api/area?lat=37&lon=-122&country=us&key=job-1`);
+    let status: Record<string, unknown> = {};
+    for (let i = 0; i < 50 && status.terrain !== 'done'; i++) {
+      await new Promise((r) => setTimeout(r, 20));
+      const res = await fetch(`${base}/api/area-status?key=job-1`);
+      if (res.ok) status = (await res.json()) as Record<string, unknown>;
+    }
+    expect(status).toMatchObject({ roads: 'working', places: 'working', terrain: 'done', wind: 'done', done: false, mapAttempt: 1, mapServer: 'main' });
+    release();
+    expect((await area).status).toBe(200);
+    const end = (await (await fetch(`${base}/api/area-status?key=job-1`)).json()) as Record<string, unknown>;
+    expect(end).toMatchObject({ roads: 'done', places: 'done', done: true });
+    expect(typeof end.elapsedMs).toBe('number');
   });
 
   it('serves the saved demo when live data fails', async () => {
@@ -59,7 +100,7 @@ describe('server', () => {
     { type: 'way', id: 1, nodes: [10, 11], tags: { highway: 'residential' } },
     { type: 'node', id: 10, lat: 37, lon: -122 }, { type: 'node', id: 11, lat: 37.001, lon: -122 },
   ] });
-  const overpassOk = (init?: RequestInit) => new Response(String(init?.body).includes('amenity') ? '{"elements":[]}' : roadsBody);
+  const overpassOk = (_init?: RequestInit) => new Response(roadsBody);
   const savedDemo = async (): Promise<string> => {
     const file = path.join(await mkdtemp(path.join(tmpdir(), 'sp-demo-')), 'demo.json');
     await writeFile(file, JSON.stringify({ roads: [], fallbacksUsed: ['saved'] }));

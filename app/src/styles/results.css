@@ -41,3 +41,12 @@ h1 .sample { font-family: "Barlow", system-ui, sans-serif; }
 .fix-list .val { min-width: 72px; }
 
 @media (max-width: 900px) { .timewrap .cut b { font-size: 13px; } }
+
+/* The simulated fire reaches the destination: icon and bold words carry it, not color alone. */
+.res-dest-fire { display: flex; gap: var(--s2); align-items: flex-start; margin: 0; padding: var(--s2) var(--s3); border: 1px solid var(--warn); border-radius: var(--r); background: rgba(255, 194, 77, .08); font-size: 15px; }
+.res-dest-fire .icon { width: 20px; height: 20px; color: var(--warn); flex: none; margin-top: 1px; }
+
+/* Touch: inline links reach 44 px. */
+@media (pointer: coarse), (max-width: 900px) {
+  .how .row a, .side > a:not(.btn) { display: inline-flex; align-items: center; min-height: 44px; }
+}

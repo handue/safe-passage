@@ -6,10 +6,16 @@ export interface GeocodeResult { label: string; lat: number; lon: number; countr
 export interface PlanRequest {
   household: { adults: number; children: number; needHelpMoving: number; dogs: number; catsAndSmallPets: number; cars: number };
   tasks: { label: string; minutes: number }[];
-  main: { roadNames: string[]; driveMin: number; destination: string } | null;
-  backup: { roadNames: string[]; driveMin: number; destination: string } | null;
-  /** onSharedStretch: the closing road is on the stretch both routes share, so the backup does not avoid it. */
-  drill: { neededMin: number; closeMin: number; roadName: string; onSharedStretch: boolean } | null;
+  /** exitPoint: the destination is where a road leaves the area, not a place to meet. */
+  main: { roadNames: string[]; driveMin: number; destination: string; exitPoint: boolean } | null;
+  backup: { roadNames: string[]; driveMin: number; destination: string; exitPoint: boolean } | null;
+  /**
+   * onSharedStretch: the backup drives the same closing stretch, so it does not avoid it.
+   * backupCut: in this drill the fire also closed the backup before the car could pass.
+   */
+  drill: { neededMin: number; closeMin: number; roadName: string; onSharedStretch: boolean; backupCut: boolean } | null;
+  /** Compass word for the way the backup goes on the road that may close, when both routes use that road; else ''. */
+  backupTurn: string;
   changes: string[];
 }
 
@@ -56,6 +62,7 @@ export function fetchArea(place: { lat: number; lon: number; label: string; coun
   return getJson<AreaData>(`/api/area?${p}`);
 }
 
-export function requestPlan(body: PlanRequest): Promise<PlanResponse> {
-  return getJson<PlanResponse>('/api/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+/** Pass a signal to cancel a request whose inputs are out of date. */
+export function requestPlan(body: PlanRequest, signal?: AbortSignal): Promise<PlanResponse> {
+  return getJson<PlanResponse>('/api/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal });
 }

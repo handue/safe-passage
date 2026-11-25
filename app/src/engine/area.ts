@@ -20,6 +20,6 @@ export function prepareArea(area: AreaData): PreparedArea {
   const graph = buildGraph(area.roads, proj);
   const fireGrid = makeFireGrid(100, 60);
   const elevationPerCell = elevationForCells(fireGrid, area.elevation);
-  const waysOut = planWaysOut(graph, homeXY, area.places, proj);
+  const waysOut = planWaysOut(graph, homeXY, area.places, proj, fireGrid);
   return { proj, homeXY, graph, fireGrid, elevationPerCell, waysOut };
 }

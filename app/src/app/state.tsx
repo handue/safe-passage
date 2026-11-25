@@ -8,6 +8,18 @@ import type { PlanResponse } from './api';
 
 export type LoadStep = { label: string; state: 'done' | 'working' | 'waiting' };
 
+/** How exactly an address match places home (from the server's geocode result). */
+export type MatchPrecision = 'house' | 'street' | 'place';
+
+/** What the user typed and picked on the address screen, kept so going back does not lose it. */
+export interface Entry {
+  query: string;
+  /** The pick list from the last search, or null when there was none. */
+  choices: { label: string; lat: number; lon: number; country: string; precision?: MatchPrecision }[] | null;
+  /** The address the current load uses, shown on the loading screen. */
+  matched: { label: string; precision?: MatchPrecision } | null;
+}
+
 export interface Fixes {
   /** Task id -> new minutes the user expects after the change (their estimate). */
   taskMinutes: Record<string, number>;
@@ -31,6 +43,7 @@ export interface AppState {
   after: DrillRun | null;
   plan: { status: 'idle' | 'loading' | 'ready'; data: PlanResponse | null };
   meeting: { primary: string; ifClosed: string; contact: string };
+  entry: Entry;
 }
 
 /** Fixed drill wind for the demo address ("Strong wind day" from the northeast), so the
@@ -64,6 +77,7 @@ export function initialState(): AppState {
     after: null,
     plan: { status: 'idle', data: null },
     meeting: { primary: '', ifClosed: '', contact: '' },
+    entry: { query: '', choices: null, matched: null },
   };
 }
 
@@ -79,6 +93,7 @@ export type Action =
   | { type: 'plan/loading' }
   | { type: 'plan/done'; data: PlanResponse }
   | { type: 'meeting/set'; patch: Partial<AppState['meeting']> }
+  | { type: 'entry/set'; patch: Partial<Entry> }
   | { type: 'reset' };
 
 /** Route shape in local XY for drawing and for ignition suggestions. */
@@ -117,7 +132,7 @@ function runAfter(s: AppState): DrillRun | null {
 function reducer(s: AppState, a: Action): AppState {
   switch (a.type) {
     case 'load/start':
-      return { ...initialState(), household: s.household, load: { status: 'loading', steps: a.steps.map((label, i) => ({ label, state: i === 0 ? 'working' : 'waiting' })) } };
+      return { ...initialState(), household: s.household, entry: s.entry, load: { status: 'loading', steps: a.steps.map((label, i) => ({ label, state: i === 0 ? 'working' : 'waiting' })) } };
     case 'load/step':
       return { ...s, load: { ...s.load, steps: s.load.steps.map((st, i) => ({ ...st, state: i < a.index ? 'done' : i === a.index ? 'working' : 'waiting' })) } };
     case 'load/error':
@@ -166,8 +181,11 @@ function reducer(s: AppState, a: Action): AppState {
       };
     case 'meeting/set':
       return { ...s, meeting: { ...s.meeting, ...a.patch } };
+    case 'entry/set':
+      return { ...s, entry: { ...s.entry, ...a.patch } };
     case 'reset':
-      return initialState();
+      // A fresh drill, but the typed address stays so the user can come back to it.
+      return { ...initialState(), entry: s.entry };
   }
 }
 

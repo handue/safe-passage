@@ -1,35 +1,24 @@
 // Screen 3: the home, its ways out on real roads, and today's wind and slope.
 import { useId, useMemo, useState } from 'react';
-import { useApp } from '../app/state';
+import { DEMO_WIND, isDemoWind, useApp } from '../app/state';
 import { go } from '../app/router';
 import type { PreparedArea } from '../engine/area';
-import { edgesLeavingGrid, tasksMinutes } from '../engine/drill';
+import { destTitle, edgesLeavingGrid, splitOnSameRoad, tasksMinutes } from '../engine/drill';
 import { cellCenter, cellOf } from '../engine/fire';
 import { bearingDeg, compassName, dist } from '../engine/geo';
-import { UNNAMED_ROAD } from '../engine/graph';
 import type { AreaData, Route, Wind } from '../engine/types';
 import { MapView, type MapViewProps } from '../ui/MapView';
 import { Tag, fmtMin } from '../ui/Tag';
 import { Icon } from '../ui/Icon';
+import { fmtDist, fmtHeight, fmtSpeed, fmtSquare, minShort, unitsFor } from '../ui/units';
+import { wayOutName } from './ResultsScreen';
 import '../styles/home.css';
 
-const METERS_PER_MILE = 1609.344;
-const FEET_PER_METER = 3.28084;
 /** Same threshold the drill uses for a "one way out" bottleneck (drill.ts ONE_WAY_OUT_MIN_M). */
 const ONE_WAY_OUT_MIN_M = 200;
 const SLOPE_RADIUS_M = 2000;
-/** Below this rise (10 ft) the ground is called nearly flat. */
-const FLAT_RISE_FT = 10;
-
-const mi = (m: number) => (m / METERS_PER_MILE).toFixed(1);
-
-/** Short name for a route: first and last named road. */
-function routeName(r: Route): string {
-  const named = r.roadNames.filter((n) => n !== UNNAMED_ROAD);
-  if (named.length === 0) return 'Unnamed roads';
-  if (named.length === 1) return named[0];
-  return `${named[0]} to ${named[named.length - 1]}`;
-}
+/** Below this rise (about 10 ft) the ground is called nearly flat. */
+const FLAT_RISE_M = 3;
 
 /** Highest point within SLOPE_RADIUS_M of home, from the elevation per fire cell. */
 function slopeNearHome(p: PreparedArea): { riseM: number; distM: number; bearing: number } | null {
@@ -99,19 +88,25 @@ function HomeMap({ area, prepared }: { area: AreaData; prepared: PreparedArea })
   const wind = area.wind;
   const hasTerrain = prepared.elevationPerCell !== null;
   const householdMin = tasksMinutes(state.household.tasks, 'day');
-  const gridKm = (prepared.fireGrid.cellM * prepared.fireGrid.size) / 1000;
+  const units = unitsFor(area.country);
+  const square = fmtSquare(prepared.fireGrid.cellM * prepared.fireGrid.size, units);
+  const isUS = area.country?.toLowerCase() === 'us';
+  // The demo drill always uses the preset wind, which can differ from today's forecast shown here.
+  const demoWindNote = state.isDemo && !(wind && isDemoWind(wind));
 
   const ways = [
     main ? { key: 'A', route: main, which: 'main' as const } : null,
     backup ? { key: 'B', route: backup, which: 'backup' as const } : null,
   ].filter((x) => x !== null);
 
+  const names = Object.fromEntries(ways.map((x) => [x.key, wayOutName(w, x.route)]));
   const routes: MapViewProps['routes'] = ways.map((x) => ({ which: x.which, style: x.which, label: `Way out ${x.key}` }));
   const usedDests = ways.map((x) => destOf(x.route)).filter((d) => d !== null);
+  const splitRoad = useMemo(() => splitOnSameRoad(prepared.graph, w), [prepared, w]);
   const outside = ways.map((x) => ({ key: x.key, m: outsideM(x.route) })).filter((x) => x.m > 0);
 
   const ariaLabel = main
-    ? `Map of roads around your home. Way out A, solid line, ${routeName(main)}.` + (backup ? ` Way out B, dashed line, ${routeName(backup)}.` : ' No second way out found.')
+    ? `Map of roads around your home. ${names.A}, solid line.` + (backup ? ` ${names.B}, dashed line.` : ' No second way out found.')
     : 'Map of roads around your home. No way out found on mapped roads.';
 
   return (
@@ -135,7 +130,7 @@ function HomeMap({ area, prepared }: { area: AreaData; prepared: PreparedArea })
             </label>
           </fieldset>
         </div>
-        <MapView prepared={prepared} routes={routes} wind={showWind ? wind : null} terrain={showTerrain && hasTerrain} size="full" ariaLabel={ariaLabel} />
+        <MapView prepared={prepared} routes={routes} wind={showWind ? wind : null} terrain={showTerrain && hasTerrain} size="full" units={units} ariaLabel={ariaLabel} />
         <p className="small muted">
           {/* On phones the map's own note already gives the line key and the credit. */}
           <span className="home-mapkey">
@@ -171,8 +166,19 @@ function HomeMap({ area, prepared }: { area: AreaData; prepared: PreparedArea })
           <div className="box row home-callout">
             <Icon name="oneway" />
             <div className="grow">
-              <b>Only one way out for the first {mi(w.sharedFromDoorM)} mi</b>
+              <b>Only one way out for the first {fmtDist(w.sharedFromDoorM, units)}</b>
               <div className="muted">{w.sharedRoadNames.join(', ') || 'Unnamed road'}, until the ways out split. <Tag kind="calc" /></div>
+            </div>
+          </div>
+        ) : splitRoad ? (
+          <div className="box row home-callout">
+            <Icon name="oneway" />
+            <div className="grow">
+              <b>Both ways out start on {splitRoad}</b>
+              <div className="muted">
+                Ways out A and B split within {fmtDist(ONE_WAY_OUT_MIN_M, units)} of home, then go opposite ways on {splitRoad}. A fire near that
+                junction can close both. <Tag kind="calc" />
+              </div>
             </div>
           </div>
         ) : (
@@ -180,7 +186,7 @@ function HomeMap({ area, prepared }: { area: AreaData; prepared: PreparedArea })
             <Icon name="check" />
             <div className="grow">
               <b>More than one way out from your door</b>
-              <div className="muted">Ways out A and B split within {ONE_WAY_OUT_MIN_M} m of home. <Tag kind="calc" /></div>
+              <div className="muted">Ways out A and B split within {fmtDist(ONE_WAY_OUT_MIN_M, units)} of home. <Tag kind="calc" /></div>
             </div>
           </div>
         )}
@@ -192,16 +198,17 @@ function HomeMap({ area, prepared }: { area: AreaData; prepared: PreparedArea })
               {ways.map((x) => (
                 <li key={x.key}>
                   <div className="grow">
-                    <b>{x.key}. {routeName(x.route)}</b>
-                    <div className="muted">to {destOf(x.route)?.label ?? 'destination'} · {mi(x.route.lengthM)} mi{x.key === 'B' ? ' · dashed' : ' · solid'}</div>
+                    <b>{names[x.key]}</b>
+                    <div className="muted">to {(() => { const d = destOf(x.route); return d ? destTitle(d) : 'the destination'; })()} · {fmtDist(x.route.lengthM, units)}{x.key === 'B' ? ' · dashed' : ' · solid'}</div>
                   </div>
-                  <div className="val">{fmtMin(x.route.driveMin)} min drive</div>
+                  <div className="val">{minShort(x.route.driveMin)} drive</div>
                 </li>
               ))}
             </ul>
             {outside.length > 0 && (
               <p className="small muted home-note">
-                {outside.map((o) => `Last ${mi(o.m)} mi of ${o.key}`).join(' and ')} {outside.length > 1 ? 'run' : 'runs'} outside the {gridKm} × {gridKm} km fire area. The drill does not model fire there.
+                {outside.map((o, i) => `${i === 0 ? 'The' : 'the'} last ${fmtDist(o.m, units)} of way out ${o.key}`).join(' and ')} {outside.length > 1 ? 'run' : 'runs'} outside the {square} fire
+                area. The drill does not model fire there.
               </p>
             )}
           </div>
@@ -211,8 +218,8 @@ function HomeMap({ area, prepared }: { area: AreaData; prepared: PreparedArea })
           <div className="stack-s">
             <h2 className="home-h">Candidate destinations</h2>
             <p>
-              {usedDests.map((d) => (d.label.endsWith(d.name) ? d.label : `${d.label} (${d.name})`)).join(', ')}.{' '}
-              <b>Candidate destinations, not confirmed shelters.</b> Check with your county.
+              {usedDests.map(destTitle).join(', ')}.{' '}
+              <b>Candidate destinations, not confirmed shelters.</b> {isUS ? 'Check with your county.' : 'Check with your local council or emergency service.'}
             </p>
             {usedDests.some((d) => d.kind === 'exit_point') && (
               <p className="small muted">An exit point is where a main road leaves the mapped area, not a place to stay.</p>
@@ -225,7 +232,7 @@ function HomeMap({ area, prepared }: { area: AreaData; prepared: PreparedArea })
           <p>
             {wind ? (
               <>
-                Wind from the {compassName(wind.fromDeg)}, {Math.round(wind.speedMph)} mph ({windSource(area, wind)}
+                Wind from the {compassName(wind.fromDeg)}, {fmtSpeed(wind.speedMph, units)} ({windSource(area, wind)}
                 {fmtTime(wind.fetchedAt) ? `, ${fmtTime(wind.fetchedAt)}` : ''}).
               </>
             ) : (
@@ -233,15 +240,21 @@ function HomeMap({ area, prepared }: { area: AreaData; prepared: PreparedArea })
             )}{' '}
             {slope === null ? (
               <>Flat (no elevation data).</>
-            ) : slope.riseM * FEET_PER_METER < FLAT_RISE_FT ? (
-              <>Nearly flat: no point within {mi(SLOPE_RADIUS_M)} mi is more than {FLAT_RISE_FT} ft above home.</>
+            ) : slope.riseM < FLAT_RISE_M ? (
+              <>Nearly flat: no point within {fmtDist(SLOPE_RADIUS_M, units)} is more than {fmtHeight(FLAT_RISE_M, units)} above home.</>
             ) : (
               <>
-                Ground rises {Math.round(slope.riseM * FEET_PER_METER)} ft toward the {compassName(slope.bearing)}, to the highest point within{' '}
-                {mi(SLOPE_RADIUS_M)} mi ({Math.round((slope.riseM / slope.distM) * 100)}% average grade). Fire spreads faster uphill.
+                Ground rises {fmtHeight(slope.riseM, units)} toward the {compassName(slope.bearing)}, to the highest point within{' '}
+                {fmtDist(SLOPE_RADIUS_M, units)} ({Math.round((slope.riseM / slope.distM) * 100)}% average grade). Fire spreads faster uphill.
               </>
             )}
           </p>
+          {demoWindNote && (
+            <p className="small muted">
+              Demo address: the drill uses a preset strong wind from the {compassName(DEMO_WIND.fromDeg)}, {fmtSpeed(DEMO_WIND.speedMph, units)}, so the same practice
+              fire runs every time. You can change it in drill setup.
+            </p>
+          )}
         </div>
 
         {area.fallbacksUsed.length > 0 && (
@@ -259,7 +272,7 @@ function HomeMap({ area, prepared }: { area: AreaData; prepared: PreparedArea })
           ) : (
             <button type="button" className="primary" onClick={() => go('address')}>Try another address</button>
           )}
-          <a href="#/household">Edit household ({fmtMin(householdMin)} min)</a>
+          <a className="home-link" href="#/household">Edit household ({fmtMin(householdMin)} min)</a>
         </div>
       </aside>
     </main>

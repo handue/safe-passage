@@ -32,6 +32,11 @@
 .sp-map .road.mid { stroke-width: 2.6px; }
 .sp-map .hwy { stroke-width: 4.2px; }
 
+/* Sea: cells at or below sea level, with the coastline. Named on the map by a "Sea" label. */
+.sp-map .sp-sea { fill: #0f2c40; fill-opacity: .85; stroke: none; }
+.sp-map .sp-coast { fill: none; stroke: #5b9cc4; stroke-opacity: .8; stroke-width: 1.6px; stroke-linejoin: round; }
+.map.sp-map svg text.t-sea { fill: #8fc3e3; font-style: italic; letter-spacing: .06em; }
+
 /* Fire model edge: outside the square the fire is not simulated */
 .sp-map .sp-outside { fill: rgba(4, 9, 14, .45); stroke: none; }
 .sp-map .sp-gridedge { fill: none; stroke: #8ea3bd; stroke-opacity: .55; stroke-width: 1.2px; stroke-dasharray: 3 7; }
@@ -49,13 +54,27 @@
 /* Markers */
 .sp-map .closure { stroke-width: 3px; stroke-dasharray: 5 4; }
 .sp-map .closure-back { stroke-width: 8px; }
+/* Closure ring moved off the Home ring: a short line back to where the road closes */
+.sp-map .closure-lead { stroke: var(--short); stroke-width: 2px; stroke-dasharray: 3 3; }
+.sp-map .closure-dot { fill: var(--short); stroke: #081017; stroke-width: 1.5px; }
+/* Dark plate behind closure labels, so they read over fire cells */
+.sp-map .t-plate { fill: #081017; fill-opacity: .82; stroke: var(--short); stroke-opacity: .5; stroke-width: 1px; }
 .sp-map .leader { stroke-width: 1.5px; }
 .sp-map .home-ring { stroke-width: 2px; }
 .sp-map .dest { stroke-width: 2px; }
+/* Off-map destination: chevron toward where the route leaves the view */
+.sp-map .dest-arrow { fill: none; stroke: var(--spare); stroke-width: 2.5px; stroke-linecap: round; stroke-linejoin: round; }
 .sp-map .wind path { stroke-width: 3.5px; }
 .sp-map .ig { stroke-width: 2.5px; }
 .sp-map .ig-ring { stroke-width: 1.5px; stroke-dasharray: 4 5; }
 .sp-map .sp-status { font-weight: 700; }
+
+/* Which fire minute is drawn, in a map corner (shown on phones too) */
+.map.sp-map svg text.t-cap { fill: var(--ink); font-weight: 700; }
+.map-caption { margin: 6px 0 0; font-size: 13px; font-weight: 600; color: var(--ink); }
+
+/* Labels never take clicks, so a click on a label still picks the map point under it */
+.sp-map .sp-labels { pointer-events: none; }
 
 /* Ignition buttons: keyboard focus gets its own visible ring */
 .sp-map .ig-btn { cursor: pointer; outline: none; }

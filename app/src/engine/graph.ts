@@ -134,11 +134,13 @@ function cleanWay(way: RawRoadWay, proj: Projection): CleanWay | null {
  * Nearest graph node to a point. Prefers a node on a non-service road when one is
  * within 50 m of the absolute nearest distance, so a home on a driveway snaps to
  * the street. Returns null if the graph is empty or nothing is within maxM.
+ * accept, when given, skips nodes it rejects (for example nodes that cannot be reached).
  */
-export function nearestNode(graph: RoadGraph, xy: XY, maxM = Infinity): number | null {
+export function nearestNode(graph: RoadGraph, xy: XY, maxM = Infinity, accept?: (nodeId: number) => boolean): number | null {
   let bestId = -1;
   let bestD = Infinity;
   for (const node of graph.nodes) {
+    if (accept && !accept(node.id)) continue;
     const d = dist(node.xy, xy);
     if (d < bestD) {
       bestD = d;
@@ -160,7 +162,7 @@ export function nearestNode(graph: RoadGraph, xy: XY, maxM = Infinity): number |
   let preferId = -1;
   let preferD = Infinity;
   for (const node of graph.nodes) {
-    if (!onMainRoad[node.id]) continue;
+    if (!onMainRoad[node.id] || (accept && !accept(node.id))) continue;
     const d = dist(node.xy, xy);
     if (d <= limit && d < preferD) {
       preferD = d;

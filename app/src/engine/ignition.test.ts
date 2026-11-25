@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { suggestIgnitions } from './ignition';
+import { checkIgnitionPoint, suggestIgnitions } from './ignition';
 import { makeFireGrid, cellCenter } from './fire';
 import { bearingDeg } from './geo';
 import type { Wind, XY } from './types';
@@ -101,4 +101,28 @@ it('keeps suggested points away from the routes', () => {
     const d = p.xy.x <= 0 && p.xy.x >= -3000 ? Math.abs(p.xy.y) : Math.hypot(p.xy.x - Math.min(0, Math.max(-3000, p.xy.x)), p.xy.y);
     expect(d).toBeGreaterThanOrEqual(800);
   }
+});
+
+describe('coastal grid', () => {
+  // South half of the grid is sea (0 m); the land rises gently to the north.
+  const coast = new Float32Array(60 * 60);
+  for (let row = 0; row < 60; row++) {
+    for (let col = 0; col < 60; col++) coast[row * 60 + col] = row < 30 ? 0 : 5 + (row - 30) * 2;
+  }
+  const isSea = (p: XY) => p.y < 0;
+
+  it('never suggests a point on the sea, even when wind blows from the sea', () => {
+    const fromSouth: Wind = { fromDeg: 180, speedMph: 25, source: 'manual' };
+    const picks = suggestIgnitions(grid, coast, fromSouth, { x: 0, y: 100 }, [{ x: 0, y: 100 }, { x: 0, y: 1500 }]);
+    expect(picks.length).toBeGreaterThan(0);
+    for (const p of picks) expect(isSea(p.xy)).toBe(false);
+    for (const p of picks) expect(checkIgnitionPoint(grid, coast, p.xy)).toBe('ok');
+  });
+
+  it('checkIgnitionPoint refuses water and points outside the area', () => {
+    expect(checkIgnitionPoint(grid, coast, { x: 0, y: -1500 })).toBe('water');
+    expect(checkIgnitionPoint(grid, coast, { x: 0, y: 1500 })).toBe('ok');
+    expect(checkIgnitionPoint(grid, coast, { x: 5000, y: 0 })).toBe('outside');
+    expect(checkIgnitionPoint(grid, null, { x: 0, y: -1500 })).toBe('ok');
+  });
 });

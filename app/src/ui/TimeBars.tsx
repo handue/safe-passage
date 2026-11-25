@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { Task } from '../engine/types';
 import { fmtMin, fmtT } from './Tag';
+import { minShort } from './units';
 import '../styles/results.css';
 
 export interface TimeBar {
@@ -74,9 +75,10 @@ const NAME_FIT = 0.08;
 const NAME_MIN_PX = 52;
 const NUMBER_MIN_PX = 20;
 
-function keyText(segs: Seg[]): string {
+/** "gather 5 min, drive 1 min (slowest)": each part carries its own unit, so "1 min" is never "1 minutes". */
+export function keyText(segs: Pick<Seg, 'kind' | 'word' | 'min'>[]): string {
   return segs
-    .map((s) => `${s.word} ${segMin(s.min)}${s.kind === 'slow' ? ' (slowest)' : s.kind === 'fixed' ? ' (changed)' : ''}`)
+    .map((s) => `${s.word} ${minShort(s.min)}${s.kind === 'slow' ? ' (slowest)' : s.kind === 'fixed' ? ' (changed)' : ''}`)
     .join(', ');
 }
 
@@ -128,8 +130,8 @@ export function TimeBars({ bars, note }: { bars: TimeBar[]; note?: ReactNode }) 
       const close =
         bar.closeRoad && bar.closeMin !== null
           ? ` ${bar.closeRoad} closes at minute ${fmtMin(bar.closeMin)}; this plan reaches that point at minute ${fmtMin(end)}.`
-          : ` The fire did not close this route; total ${fmtMin(end)} minutes.`;
-      return `${head}${keyText(segs)} minutes.${close}`;
+          : ` The fire did not close this route; total ${minShort(end)}.`;
+      return `${head}${keyText(segs)}.${close}`;
     })
     .join(' ');
 
@@ -154,7 +156,7 @@ export function TimeBars({ bars, note }: { bars: TimeBar[]; note?: ReactNode }) 
       </div>
       {/* The written key shows on narrow screens, and always when a segment is too small for its name. */}
       <p className={allNamed ? 'barkey keytext' : 'barkey'}>
-        {built.map(({ bar, segs }) => `${bar.name ? `${bar.name}, in order` : 'In order'}: ${keyText(segs)} minutes.`).join(' ')}
+        {built.map(({ bar, segs }) => `${bar.name ? `${bar.name}, in order` : 'In order'}: ${keyText(segs)}.`).join(' ')}
       </p>
       <div className="row between small muted">
         <span>T+0, order to leave</span>

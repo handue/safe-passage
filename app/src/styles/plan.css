@@ -12,10 +12,14 @@
 .plan-wait { display: flex; gap: var(--s2); align-items: center; flex-wrap: wrap; color: var(--ink-2); }
 .plan-wait .icon { flex: none; width: 20px; height: 20px; }
 .plan-wait button { margin-left: auto; }
+.plan-elapsed { color: var(--ink-2); font-variant-numeric: tabular-nums; }
 
 .plan-field { gap: var(--s1); }
 .plan-field input { width: 100%; }
 .printval { display: none; }
+
+/* Touch targets: plain links on this screen get at least 44px of height. */
+.plan > .row > a, .plan .how .row a, .plan .small a { display: inline-flex; align-items: center; min-height: 44px; }
 
 .plan-fallbacks { margin: 0; padding-left: var(--s5); display: flex; flex-direction: column; gap: var(--s1); }
 
@@ -24,9 +28,22 @@
   .plan-field input { display: none; }
   .printval { display: block; min-height: 1.45em; padding-bottom: 2px; border-bottom: 1px solid #888; color: #111; }
   .plan-wait { color: #333; }
+  /* Result lines in dark ink on paper: the icon and bold words carry short or spare. */
+  .plan-result, .plan-result.is-short, .plan-result.is-spare,
   .plan-result .icon, .plan-result.is-short .icon, .plan-result.is-spare .icon { color: #111; }
+  .plan-printnote { margin: 0; font-size: 13px; color: #111; border: 1px solid #111; padding: 4px 8px; }
   .plan section { break-inside: avoid; }
-  .plan a { color: #111; }
+  /* Paper is narrower than the 900 px breakpoint: keep two columns and tighter spacing so the
+     plan fits on 2 pages and no box is split. */
+  .plan .cols2 { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s4); }
+  .plan .how-cols { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s3); }
+  .plan .how { break-inside: avoid; gap: var(--s2); padding: var(--s2) var(--s3); }
+  .plan .box { padding: var(--s3) var(--s4); }
+  .plan-list { gap: 2px; }
+  .plan h2 { margin: 0; }
+  /* The disclaimer prints under the title, so the page footer would only add a near-empty last page. */
+  body[data-step="plan"] .disclaimer { display: none; }
+  .plan a { color: #111; min-height: 0; }
 }
 .plan-field textarea { font: inherit; padding: var(--s3); border: 1px solid var(--line-strong); border-radius: var(--r); background: #0c141f; color: var(--ink); resize: vertical; min-height: 44px; width: 100%; }
 .plan-field textarea::placeholder { color: #8d9db3; }

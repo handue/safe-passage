@@ -2,14 +2,15 @@
 // estimates, or switching to the backup route) and the same fire runs again via fixes/set.
 import { useState } from 'react';
 import { useApp, type Fixes } from '../app/state';
-import { compareRuns, type DrillRun } from '../engine/drill';
+import { compareRuns, displayDiffMin, type DrillRun } from '../engine/drill';
 import type { RouteRun, Task } from '../engine/types';
 import { Icon } from '../ui/Icon';
 import { Tag, fmtMin, fmtT } from '../ui/Tag';
 import { MapView, type MapViewProps } from '../ui/MapView';
 import { TimeBars, type TimeBar } from '../ui/TimeBars';
 import type { PreparedArea } from '../engine/area';
-import { DemoChip, DrillProblem, ModelNotes, NavLink, backupRoadName, barFor, destLabel, endMin, verdictOf, windText } from './ResultsScreen';
+import { aDrive, capitalize, minShort, unitsFor } from '../ui/units';
+import { DemoChip, DrillProblem, ModelNotes, NavLink, barFor, destLabel, destinationFireText, endMin, fireCaptionFor, verdictOf, wayOutName, windText } from './ResultsScreen';
 import '../styles/results.css';
 import '../styles/fix.css';
 
@@ -149,8 +150,10 @@ export function FixScreen() {
   const w = prepared.waysOut;
   const mainRoute = w.main!;
   const backupRoute = w.backup;
-  const backupRoad = backupRoute ? backupRoadName(mainRoute, backupRoute) : null;
-  const driveDiff = backupRoute ? Math.round(backupRoute.driveMin - mainRoute.driveMin) : 0;
+  const units = unitsFor(area.country);
+  const backupName = backupRoute ? wayOutName(w, backupRoute) : null;
+  // Each drive is rounded before subtracting, so the difference matches the minutes in the sentence.
+  const driveDiff = backupRoute ? displayDiffMin(backupRoute.driveMin, mainRoute.driveMin) : 0;
 
   // Bars: before with the household's tasks, after with the changed tasks outlined.
   const fixedIds = Object.keys(fixes.taskMinutes);
@@ -164,10 +167,12 @@ export function FixScreen() {
   const fb = focusMain.binding;
   const switched = shown !== null && fixes.switchMainRoute;
   const routes: MapViewProps['routes'] = [
-    { which: 'main', style: switched ? 'unused' : focusMain.outcome === 'short' ? 'closed' : 'main', label: switched ? 'Old main route' : 'Main route' },
+    { which: 'main', style: switched ? 'unused' : focusMain.outcome === 'short' ? 'closed' : 'main', label: switched ? 'Way out A (old main)' : 'Way out A' },
   ];
-  if (backupRoute) routes.push({ which: 'backup', style: switched ? (focusMain.outcome === 'short' ? 'closed' : 'main') : 'unused', label: switched ? 'New main route' : 'Backup' });
+  if (backupRoute) routes.push({ which: 'backup', style: switched ? (focusMain.outcome === 'short' ? 'closed' : 'main') : 'unused', label: switched ? 'Way out B (new main)' : 'Way out B' });
   const fireMin = endMin(focusMain);
+  const fireCaption = fireCaptionFor(focusMain);
+  const destFire = destinationFireText(focusMain, destLabel(prepared, focusMain.route.destinationId));
 
   // Closure point labels, as in the approved design: when each plan reaches it, and whether that is before it closed.
   const bb = before.main.binding;
@@ -179,7 +184,7 @@ export function FixScreen() {
     if (ab && ab.edgeId === bb.edgeId) mapNotes.push({ xy: ab.xy, text: reachText('After', ab.passMin, ab.closeMin), tone: shown!.main!.outcome === 'short' ? 'short' : 'route' });
   }
 
-  const runsChip = `${cmp?.sameFire === false ? 'Different fires' : shown ? 'Both runs' : 'This fire'}: ${ignitionName(before, state.suggestions)} · ${windText(before.setup.wind)} · ${before.setup.start} · same random seed`;
+  const runsChip = `${cmp?.sameFire === false ? 'Different fires' : shown ? 'Both runs' : 'This fire'}: ${ignitionName(before, state.suggestions)} · ${windText(before.setup.wind, false, units)} · ${before.setup.start} · same random seed`;
 
   return (
     <main className="stage fix-stage">
@@ -215,6 +220,12 @@ export function FixScreen() {
           }
         />
         <ModelNotes run={focus} area={area} prepared={prepared} which="both" />
+        {destFire && (
+          <p className="res-dest-fire" role="status">
+            <Icon name="warn" />
+            <span><b>Fire at the destination.</b> {destFire} <Tag kind="calc" /></span>
+          </p>
+        )}
       </div>
 
       <div className="cols2 fix-cols">
@@ -222,7 +233,7 @@ export function FixScreen() {
           <h2>Changes</h2>
           <ul className="list fix-list">
             {firstTasks.map(taskRow)}
-            {backupRoute && backupRoad && (
+            {backupRoute && backupName && (
               <li>
                 <input
                   type="checkbox"
@@ -231,12 +242,12 @@ export function FixScreen() {
                   onChange={(e) => set({ ...fixes, switchMainRoute: e.target.checked })}
                 />
                 <div className="grow">
-                  <label htmlFor="fix-route">Switch the main route to {backupRoad}</label>
+                  <label htmlFor="fix-route">Switch the main route to {backupName.replace(/^Way out/, 'way out')}</label>
                   <div className="muted small">
                     {before.backup?.binding
                       ? `In this fire ${before.backup.binding.name} closes at ${fmtT(before.backup.binding.closeMin)}. `
                       : 'This fire did not close it. '}
-                    A {fmtMin(backupRoute.driveMin)} min drive instead of {fmtMin(mainRoute.driveMin)}. The other route stays as your backup. <Tag kind="calc" />
+                    {capitalize(aDrive(backupRoute.driveMin))} instead of {minShort(mainRoute.driveMin)}. The other route stays as your backup. <Tag kind="calc" />
                   </div>
                 </div>
                 <div className="val">
@@ -262,7 +273,9 @@ export function FixScreen() {
             wind={focus.setup.wind}
             notes={mapNotes}
             size="short"
-            ariaLabel={`Map of the ${shown ? 'new' : 'current'} route. The simulated fire is shown at ${fmtT(fireMin)}.${fb ? ` ${fb.name} closes at ${fmtT(fb.closeMin)}.` : ' It did not close the route.'}`}
+            units={units}
+            fireCaption={fireCaption}
+            ariaLabel={`Map of the ${shown ? 'new' : 'current'} route, ${wayOutName(w, focusMain.route)}. ${fireCaption}.${fb ? ` ${fb.name} closes at ${fmtT(fb.closeMin)}.` : ' It did not close the route.'}`}
           />
           <div className="row fix-actions">
             <NavLink to="plan" primary>Make my plan</NavLink>

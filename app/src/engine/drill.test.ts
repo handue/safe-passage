@@ -2,8 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { buildGraph } from './graph';
 import { makeFireGrid } from './fire';
 import {
+  backupBlockedByMainClosure,
   compareRuns,
   defaultTasks,
+  destTitle,
+  destinationFire,
+  displayDiffMin,
+  displayMin,
+  exitPointName,
+  isOutsideFireArea,
   edgeClosures,
   edgeClosuresWithPoints,
   edgesLeavingGrid,
@@ -11,6 +18,7 @@ import {
   planWaysOut,
   runDrill,
   runRoute,
+  splitOnSameRoad,
   tasksMinutes,
 } from './drill';
 import { routeFromEdges } from './routing';
@@ -73,6 +81,7 @@ describe('planWaysOut', () => {
     expect(w.destinations.length).toBe(2);
     expect(w.destinations.every((d) => d.kind === 'exit_point')).toBe(true);
     expect(w.destinations.map((d) => d.label)).toEqual(['D1 Exit point', 'D2 Exit point']);
+    expect(w.destinations.map((d) => d.name)).toEqual(['where Highway 9 leaves the area', 'where Highway 9 leaves the area']);
     expect(w.main).not.toBeNull();
     expect(w.backup).not.toBeNull();
     expect(w.main!.destinationId).not.toBe(w.backup!.destinationId);
@@ -121,7 +130,8 @@ describe('planWaysOut regressions', () => {
       { id: 'p1', name: 'School', kind: 'school' as const, at: { lat: 50, lon: 2500 } },
       { id: 'p2', name: 'Library', kind: 'library' as const, at: { lat: -80, lon: 2500 } },
     ];
-    const w = planWaysOut(g, { x: 0, y: 0 }, places, flat);
+    // A grid wide enough that nothing is outside it, so only drive time decides.
+    const w = planWaysOut(g, { x: 0, y: 0 }, places, flat, makeFireGrid(100, 200));
     expect(w.main!.roadNames).toEqual(['A St']);
     expect(w.backup!.roadNames).toEqual(['B St']);
     expect(w.backup!.destinationId).toMatch(/^exit-/);
@@ -138,6 +148,28 @@ describe('planWaysOut regressions', () => {
     expect(w.main).not.toBeNull();
     expect(w.backup).toBeNull();
     expect(w.sharedFromDoorM).toBe(0);
+  });
+
+  it('snaps a place beside a cut-off stub road to the nearest road it can reach', () => {
+    // A school 20 m from a 3-node service road that touches nothing, and 200 m from East Rd.
+    const g = buildGraph(
+      [
+        way(1, 'East Rd', 'residential', [[1, 0, 0], [2, 3000, 0]]),
+        way(2, 'North Rd', 'residential', [[1, 0, 0], [3, 0, 3000]]),
+        way(3, 'Unnamed road', 'service', [[10, 2950, 220], [11, 3000, 220], [12, 3050, 220]]),
+      ],
+      flat,
+    );
+    const places = [
+      { id: 'school', name: 'Muse School', kind: 'school' as const, at: { lat: 200, lon: 3000 } },
+      { id: 'hall', name: 'North Hall', kind: 'townhall' as const, at: { lat: 3000, lon: 0 } },
+    ];
+    const w = planWaysOut(g, { x: 0, y: 0 }, places, flat, makeFireGrid(100, 200));
+    const school = w.destinations.find((d) => d.id === 'school');
+    expect(school).toBeDefined();
+    expect(g.nodes[school!.nodeId].xy).toEqual({ x: 3000, y: 0 });
+    // Two reachable places, so no exit points are added.
+    expect(w.destinations.some((d) => d.kind === 'exit_point')).toBe(false);
   });
 
   it('ignores places closer than 2 km', () => {
@@ -275,5 +307,178 @@ describe('compareRuns', () => {
     const after = { ...base, tasksMin: 20, setup: { ...base.setup, start: 'night' } } as DrillResult;
     expect(compareRuns(base, after)).toEqual({ sameFire: false, savedMin: 10, beforeMargin: null, afterMargin: null });
     expect(compareRuns(base, base).sameFire).toBe(true);
+  });
+});
+
+describe('exit point names and displayed minutes', () => {
+  it('names exit points by the road, without repeating "Exit point"', () => {
+    expect(exitPointName('Pacific Coast Highway')).toBe('where Pacific Coast Highway leaves the area');
+    expect(exitPointName('Unnamed road')).toBe('where an unnamed road leaves the area');
+    expect(exitPointName('')).toBe('where an unnamed road leaves the area');
+  });
+
+  it('titles a destination once, for places and exit points', () => {
+    const exit = { id: 'exit-1', label: 'D1 Exit point', name: exitPointName('Pacific Coast Highway'), kind: 'exit_point' as const, xy: { x: 0, y: 0 }, nodeId: 1 };
+    expect(destTitle(exit)).toBe('D1, where Pacific Coast Highway leaves the area');
+    const school = { id: 's', label: 'D2 School', name: 'Clear Creek School', kind: 'school' as const, xy: { x: 0, y: 0 }, nodeId: 2 };
+    expect(destTitle(school)).toBe('D2 School (Clear Creek School)');
+    expect(destTitle({ ...school, name: 'School' })).toBe('D2 School');
+  });
+
+  it('rounds every shown minute the same way', () => {
+    expect(displayMin(2.5)).toBe(3);
+    expect(displayMin(2.4)).toBe(2);
+    expect(displayMin(Infinity)).toBe(Infinity);
+    // 4.4 and 3.6 both show as 4 min, so the difference shown is 0, not 1.
+    expect(displayDiffMin(4.4, 3.6)).toBe(0);
+    expect(displayDiffMin(4.6, 3.4)).toBe(2);
+  });
+});
+
+describe('destinations outside the fire area', () => {
+  const grid = makeFireGrid(100, 60); // +-3 km around home
+
+  it('treats points beyond the square plus 300 m as outside', () => {
+    expect(isOutsideFireArea(grid, { x: 2900, y: 2900 })).toBe(false);
+    expect(isOutsideFireArea(grid, { x: 3200, y: 0 })).toBe(false);
+    expect(isOutsideFireArea(grid, { x: 0, y: 3400 })).toBe(true);
+  });
+
+  function twoPlaces(northM: number) {
+    const g = buildGraph(
+      [
+        way(1, 'East Rd', 'residential', [[1, 0, 0], [2, 2500, 0]]),
+        way(2, 'North Rd', 'residential', [[1, 0, 0], [3, 0, northM]]),
+      ],
+      flat,
+    );
+    const places = [
+      { id: 'east', name: 'East School', kind: 'school' as const, at: { lat: 0, lon: 2500 } },
+      { id: 'north', name: 'North Hall', kind: 'townhall' as const, at: { lat: northM, lon: 0 } },
+    ];
+    return planWaysOut(g, { x: 0, y: 0 }, places, flat, grid);
+  }
+
+  it('prefers an outside destination when the extra drive is small', () => {
+    const w = twoPlaces(3600); // 1.44x the drive to the school inside the area
+    expect(w.main!.destinationId).toBe('north');
+    expect(w.backup!.destinationId).toBe('east');
+    expect(w.destinations[0].label).toBe('D1 Hall');
+    expect(destTitle(w.destinations[0])).toBe('D1 Hall (North Hall)');
+  });
+
+  it('keeps the nearer destination when the outside one is much farther', () => {
+    const w = twoPlaces(4000); // 1.6x
+    expect(w.main!.destinationId).toBe('east');
+    expect(w.backup!.destinationId).toBe('north');
+  });
+});
+
+describe('fire at the destination', () => {
+  const grid = makeFireGrid(100, 60);
+  function fireWith(cells: [number, number, number][]): FireResult {
+    const ignitionMin = new Float32Array(60 * 60).fill(-1);
+    for (const [col, row, min] of cells) ignitionMin[row * 60 + col] = min;
+    return { grid, ignitionMin, burnMinutes: 30, horizonMin: 180 };
+  }
+
+  it('reports the first minute the fire is within 100 m, and whether that is before arrival', () => {
+    // Cell (35, 31) has center (550, 150).
+    const fire = fireWith([[35, 31, 40]]);
+    expect(destinationFire(fire, { x: 550, y: 100 }, 30)).toEqual({ fireMin: 40, beforeArrival: false, inGrid: true });
+    expect(destinationFire(fire, { x: 550, y: 100 }, 45).beforeArrival).toBe(true);
+    expect(destinationFire(fire, { x: -2000, y: 0 }, 30)).toEqual({ fireMin: Infinity, beforeArrival: false, inGrid: true });
+    expect(destinationFire(fire, { x: 5000, y: 0 }, 30)).toEqual({ fireMin: Infinity, beforeArrival: false, inGrid: false });
+  });
+
+  it('runDrill sets it on each route', () => {
+    const graph = buildGraph([way(1, 'Ridge Rd', 'residential', [[1, 0, 0], [2, 2800, 0]])], flat);
+    const main = routeFromEdges(graph, [0], 'd');
+    const waysOut: WaysOut = { homeNodeId: 0, destinations: [], main, backup: null, sharedFromDoorM: 0, sharedRoadNames: [] };
+    const r = runDrill({ graph, fireGrid: grid, elevationPerCell: null, waysOut }, [{ id: 't', label: 'Pack', minutes: 10, source: 'estimate' }], {
+      ignition: { x: 2700, y: 600 },
+      wind: { fromDeg: 0, speedMph: 10, source: 'manual' },
+      start: 'day',
+      seed: 1,
+    });
+    const df = r.main!.destinationFire!;
+    expect(df.inGrid).toBe(true);
+    expect(Number.isFinite(df.fireMin)).toBe(true);
+    expect(df.beforeArrival).toBe(df.fireMin <= r.main!.arriveMin);
+    expect(r.keyMoments.some((m) => m.label === 'Fire reaches the destination' && m.min === Math.round(df.fireMin))).toBe(true);
+  });
+});
+
+describe('backupBlockedByMainClosure', () => {
+  // Home St runs north to junction J (0, 300). Big Rd runs west and east from J.
+  const g = buildGraph(
+    [
+      way(1, 'Home St', 'residential', [[1, 0, 0], [2, 0, 300]]),
+      way(2, 'Big Rd', 'secondary', [[3, -3000, 300], [2, 0, 300], [4, 3000, 300]]),
+    ],
+    flat,
+  );
+  const edge = (x0: number, y0: number, x1: number) =>
+    g.edges.find((e) => e.shape[0].x === x0 && e.shape[0].y === y0 && e.shape[e.shape.length - 1].x === x1)!.id;
+  const homeSt = g.edges.find((e) => e.shape[0].y === 0 && e.name === 'Home St')!.id;
+  const east = edge(0, 300, 3000);
+  const west = edge(0, 300, -3000);
+  const mainRoute = routeFromEdges(g, [homeSt, east], 'e');
+  const backupRoute = routeFromEdges(g, [homeSt, west], 'w');
+
+  function runs(close: [number, number, number, number][], depart = 10) {
+    const closures = new Map<number, number>();
+    const points = new Map<number, { x: number; y: number }>();
+    for (const [id, min, x, y] of close) {
+      closures.set(id, min);
+      points.set(id, { x, y });
+    }
+    return [runRoute(g, mainRoute, depart, closures, 180, points), runRoute(g, backupRoute, depart, closures, 180, points)] as const;
+  }
+
+  it('same road name near the closure blocks the backup', () => {
+    const [m, b] = runs([[east, 20, 150, 300]]);
+    expect(backupBlockedByMainClosure(g, m, b)).toEqual({ blocked: true, reason: 'same_road_nearby', roadName: 'Big Rd' });
+  });
+
+  it('a closure on the shared first road blocks the backup', () => {
+    const [m, b] = runs([[homeSt, 20, 0, 150]]);
+    expect(backupBlockedByMainClosure(g, m, b)).toEqual({ blocked: true, reason: 'same_edge', roadName: 'Home St' });
+  });
+
+  it('a backup that is short on its own is blocked', () => {
+    const [m, b] = runs([[east, 50, 2500, 300], [west, 5, -2500, 300]]);
+    expect(backupBlockedByMainClosure(g, m, b)).toEqual({ blocked: true, reason: 'backup_short', roadName: 'Big Rd' });
+  });
+
+  it('a backup that closes before the main route is blocked', () => {
+    const [m, b] = runs([[east, 50, 2500, 300], [west, 40, -2500, 300]], 0);
+    expect(b.outcome).toBe('in_time');
+    expect(backupBlockedByMainClosure(g, m, b).reason).toBe('backup_closes_first');
+  });
+
+  it('names the road both ways out turn onto where they split', () => {
+    expect(splitOnSameRoad(g, { main: mainRoute, backup: backupRoute })).toBe('Big Rd');
+    expect(splitOnSameRoad(g, { main: mainRoute, backup: null })).toBeNull();
+  });
+
+  it('runDrill lists one way out when one closure blocks both routes', () => {
+    const grid = makeFireGrid(100, 60);
+    const waysOut: WaysOut = { homeNodeId: 0, destinations: [], main: mainRoute, backup: backupRoute, sharedFromDoorM: 0, sharedRoadNames: [] };
+    const r = runDrill({ graph: g, fireGrid: grid, elevationPerCell: null, waysOut }, [{ id: 't', label: 'Pack', minutes: 10, source: 'estimate' }], {
+      ignition: { x: 0, y: 700 },
+      wind: { fromDeg: 0, speedMph: 20, source: 'manual' },
+      start: 'day',
+      seed: 1,
+    });
+    expect(backupBlockedByMainClosure(g, r.main, r.backup).blocked).toBe(true);
+    const one = r.bottlenecks.find((b) => b.kind === 'one_way_out');
+    expect(one?.detail).toMatch(/closes for both routes at T\+\d+/);
+  });
+
+  it('a closure far along the main road leaves the backup usable', () => {
+    const [m, b] = runs([[east, 20, 2500, 300]]);
+    expect(backupBlockedByMainClosure(g, m, b)).toEqual({ blocked: false, reason: null, roadName: null });
+    expect(backupBlockedByMainClosure(g, m, null).blocked).toBe(false);
   });
 });

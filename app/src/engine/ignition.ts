@@ -2,7 +2,7 @@
 // uphill slope would carry fire toward home and the start of the main route.
 import type { FireGrid, Wind, XY } from './types';
 import { bearingDeg, compassName, dist, pointSegmentDistance, polylineLength, samplePolyline, windToVector } from './geo';
-import { cellOf } from './fire';
+import { cellOf, isInGrid, waterMask } from './fire';
 
 export interface IgnitionSuggestion {
   xy: XY;
@@ -28,7 +28,36 @@ export const IGNITION_CONSTANTS = {
   count: 3,
   /** A term must exceed this mean to be named in the reason. */
   reasonThreshold: 0.1,
+  /** Land share needed among the cells within landRadiusCells of a pick, so the fire has fuel to run. */
+  minLandShare: 0.5,
+  landRadiusCells: 2,
 } as const;
+
+/** Whether a picked point can start a drill fire: inside the grid and on land (not sea). */
+export type IgnitionPointCheck = 'ok' | 'outside' | 'water';
+
+/** For the UI: refuse a picked point outside the fire area or on the sea. Lakes and rivers are not detected. */
+export function checkIgnitionPoint(grid: FireGrid, elevationPerCell: Float32Array | null, xy: XY): IgnitionPointCheck {
+  if (!isInGrid(grid, xy)) return 'outside';
+  const mask = waterMask(elevationPerCell);
+  const c = cellOf(grid, xy);
+  if (mask && c && mask[c.row * grid.size + c.col] === 1) return 'water';
+  return 'ok';
+}
+
+/** Share of land cells within radius cells of (col, row), counting only cells inside the grid. */
+function landShare(grid: FireGrid, mask: Uint8Array, col: number, row: number, radius: number): number {
+  let land = 0;
+  let total = 0;
+  for (let r = row - radius; r <= row + radius; r++) {
+    for (let k = col - radius; k <= col + radius; k++) {
+      if (r < 0 || k < 0 || r >= grid.size || k >= grid.size) continue;
+      total++;
+      if (mask[r * grid.size + k] === 0) land++;
+    }
+  }
+  return total === 0 ? 0 : land / total;
+}
 
 interface Candidate {
   xy: XY;
@@ -39,6 +68,7 @@ interface Candidate {
   routeScore: number | null;
   wind: number;
   slope: number;
+  mostlyLand: boolean;
 }
 
 export function suggestIgnitions(
@@ -55,6 +85,7 @@ export function suggestIgnitions(
   const elevAt = (p: XY) => elevationAt(fireGrid, elevationPerCell, p);
   const windTo = windToVector(wind.fromDeg);
   const windWeight = Math.max(0, wind.speedMph) / C.windRefMph;
+  const water = elevationPerCell && elevationPerCell.length === fireGrid.size * fireGrid.size ? waterMask(elevationPerCell) : null;
 
   const termsFor = (from: XY, target: XY) => {
     const d = dist(from, target);
@@ -76,6 +107,13 @@ export function suggestIgnitions(
       const xy = { x: homeXY.x + radius * Math.sin(rad), y: homeXY.y + radius * Math.cos(rad) };
       if (!insideGrid(fireGrid, xy, C.edgeMarginM)) continue;
       if ([mainRouteShape, ...otherRouteShapes].some((shape) => distToPolyline(xy, shape) < C.minRouteClearanceM)) continue;
+      // Never on the sea. Prefer points with mostly land around them, so the fire has fuel.
+      let mostlyLand = true;
+      if (water) {
+        const cell = cellOf(fireGrid, xy);
+        if (!cell || water[cell.row * fireGrid.size + cell.col] === 1) continue;
+        mostlyLand = landShare(fireGrid, water, cell.col, cell.row, C.landRadiusCells) >= C.minLandShare;
+      }
 
       const home = termsFor(xy, homeXY);
       const route = routeTargets.map((t) => termsFor(xy, t));
@@ -91,6 +129,7 @@ export function suggestIgnitions(
         routeScore: route.length ? mean(route.map((t) => t.wind + t.slope)) : null,
         wind: windMean,
         slope: slopeMean,
+        mostlyLand,
       });
     }
   }
@@ -98,10 +137,14 @@ export function suggestIgnitions(
   // Highest score first; ties broken by bearing then radius so the order is stable.
   candidates.sort((a, b) => b.score - a.score || a.bearing - b.bearing || a.radius - b.radius);
 
+  // Mostly-land points first; points on a narrow strip of land only fill the remaining slots.
   const picked: Candidate[] = [];
-  for (const c of candidates) {
-    if (picked.length >= C.count) break;
-    if (picked.every((p) => angleBetween(p.bearing, c.bearing) >= C.minSeparationDeg)) picked.push(c);
+  for (const pass of [true, false]) {
+    for (const c of candidates) {
+      if (picked.length >= C.count) break;
+      if (c.mostlyLand !== pass) continue;
+      if (picked.every((p) => angleBetween(p.bearing, c.bearing) >= C.minSeparationDeg)) picked.push(c);
+    }
   }
 
   return picked.map((c) => ({

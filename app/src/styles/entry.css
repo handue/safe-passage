@@ -33,6 +33,13 @@
 .entry-steps > li.working .icon { color: var(--route); }
 .entry-steps > li.done .icon { color: var(--ink); }
 
+/* Matched address on the loading screen: long labels wrap instead of widening the box. */
+.entry-matched { overflow-wrap: anywhere; }
+
+/* Map server note while loading: an icon and words, never color alone. */
+.entry-note { display: flex; gap: var(--s2); align-items: flex-start; }
+.entry-note .icon { width: 18px; height: 18px; flex: none; margin-top: 2px; }
+
 /* Focus targets for headings moved to by script. */
 h1[tabindex="-1"]:focus, h2[tabindex="-1"]:focus { outline: none; }
 h1[tabindex="-1"]:focus-visible, h2[tabindex="-1"]:focus-visible { outline: 3px solid var(--route); outline-offset: 2px; }

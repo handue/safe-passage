@@ -1,9 +1,9 @@
 // Loading and problem states (mockup 10-states): building the drill, load errors, and notes to read before continuing.
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useApp } from '../app/state';
 import { DEMO } from '../app/api';
 import { go } from '../app/router';
-import { cancelLoad, consumeAutoAdvance, lastWasDemo, retryLoad, startLoad } from '../app/load';
+import { CLIENT_CAP_MS, cancelLoad, capWords, consumeAutoAdvance, getProgress, lastWasDemo, mapNote, retryLoad, startLoad, stepText, subscribeProgress } from '../app/load';
 import { Icon } from '../ui/Icon';
 import '../styles/entry.css';
 
@@ -15,10 +15,26 @@ function splitNote(note: string): [string, string] {
   return [note.slice(0, i), rest.charAt(0).toUpperCase() + rest.slice(1) + (/[.!?]$/.test(rest) ? '' : '.')];
 }
 
+/** Seconds since the load started, updated each second while `on`. */
+function useElapsedS(startedAt: number, on: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!on) return;
+    setNow(Date.now());
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [on, startedAt]);
+  return Math.max(0, Math.floor((now - startedAt) / 1000));
+}
+
 export function LoadingScreen() {
   const { state, dispatch } = useApp();
   const { load, area, prepared, isDemo } = state;
   const headRef = useRef<HTMLHeadingElement>(null);
+  const progress = useSyncExternalStore(subscribeProgress, getProgress);
+  const working = load.status === 'loading';
+  const elapsedS = useElapsedS(progress.startedAt, working);
+  const matched = state.entry.matched;
 
   const noWayOut = load.status === 'ready' && prepared !== null && prepared.waysOut.main === null;
   const outsideUs = load.status === 'ready' && area !== null && area.country !== 'us';
@@ -44,6 +60,10 @@ export function LoadingScreen() {
     cancelLoad(dispatch);
     go('address');
   }
+  function changeAddress(e: { preventDefault(): void }) {
+    e.preventDefault();
+    cancel();
+  }
   function tryDemo() {
     dispatch({ type: 'reset' });
     void startLoad(dispatch, DEMO, true);
@@ -53,23 +73,49 @@ export function LoadingScreen() {
   }
 
   if (load.status === 'loading' || load.status === 'idle') {
+    const note = mapNote(progress, elapsedS);
     return (
       <main className="narrow">
-        <section className="box stack" aria-live="polite" aria-busy="true">
+        <section className="box stack" aria-busy="true">
           <h2>Building your drill</h2>
-          <ul className="list entry-steps">
+          {matched && (
+            <p className="entry-matched">
+              Using: <b>{matched.label}</b>
+              {matched.precision && matched.precision !== 'house' && (
+                <span className="muted"> ({matched.precision === 'street' ? 'street-level match' : 'town or place match'}, not your exact house)</span>
+              )}
+              {' · '}
+              <a href="#/address" onClick={changeAddress}>
+                Not right? Change address
+              </a>
+            </p>
+          )}
+          <ul className="list entry-steps" aria-live="polite">
             {load.steps.map((s) => (
               <li key={s.label} className={s.state}>
                 <Icon name={s.state === 'done' ? 'check' : s.state === 'working' ? 'clock' : 'pending'} />
-                <div className={s.state === 'waiting' ? 'grow muted' : 'grow'}>{s.state === 'working' ? <b>{s.label}</b> : s.label}</div>
-                <div className={s.state === 'waiting' ? 'val muted' : 'val'}>{s.state}</div>
+                <div className={s.state === 'waiting' ? 'grow muted' : 'grow'}>{s.state === 'working' ? <b>{stepText(s)}…</b> : stepText(s)}</div>
+                <div className={s.state === 'waiting' ? 'val muted' : 'val'}>{s.state === 'done' ? 'done' : s.state === 'working' ? 'working' : 'next'}</div>
               </li>
             ))}
           </ul>
-          <div>
+          <p className="small">
+            <span className="val">{elapsedS} s</span> so far. Most areas take under a minute. When the map server is busy it can take up to {capWords(CLIENT_CAP_MS)}.
+          </p>
+          {note && (
+            <p className="small entry-note" role="status">
+              <Icon name="clock" /> {note}
+            </p>
+          )}
+          <div className="row">
             <button type="button" onClick={cancel}>
               Cancel
             </button>
+            {elapsedS >= 20 && lastWasDemo() !== true && (
+              <button type="button" onClick={tryDemo}>
+                Use demo address instead
+              </button>
+            )}
           </div>
         </section>
       </main>
@@ -79,13 +125,26 @@ export function LoadingScreen() {
   if (load.status === 'error') {
     const code = load.error?.code ?? 'unknown';
     const demoFailed = lastWasDemo() === true;
-    const title = code === 'roads_unavailable' ? "We couldn't load the roads near you" : code === 'network' ? "We couldn't reach the Safe Passage server" : "We couldn't build your drill";
+    const title =
+      code === 'roads_unavailable'
+        ? "We couldn't load the roads near you"
+        : code === 'too_slow'
+          ? 'Loading took too long'
+          : code === 'network'
+            ? "We couldn't reach the Safe Passage server"
+            : "We couldn't build your drill";
     const body =
       code === 'roads_unavailable'
-        ? "The road map service didn't answer. A drill needs roads, so it can't run without them."
-        : code === 'network'
-          ? 'Check your connection and that the local server is running, then retry.'
-          : 'Something went wrong while loading map data. Retry, or use another address.';
+        ? progress.reason === 'busy'
+          ? 'The map data server is busy right now. A drill needs roads, so it can\'t run without them. Retry in a minute, or try the demo address.'
+          : progress.reason === 'timeout'
+            ? "The map data server didn't answer in time. A drill needs roads, so it can't run without them."
+            : "The road map service didn't answer. A drill needs roads, so it can't run without them."
+        : code === 'too_slow'
+          ? `The map data did not arrive within ${capWords(CLIENT_CAP_MS)}. The map server may be busy. Retry, or try the demo address.`
+          : code === 'network'
+            ? 'Check your connection and that the local server is running, then retry.'
+            : 'Something went wrong while loading map data. Retry, or use another address.';
     return (
       <main className="narrow">
         <section className="box stack" aria-live="assertive">
@@ -94,6 +153,7 @@ export function LoadingScreen() {
             {title}
           </h2>
           <p>{body}</p>
+          {matched && !demoFailed && <p className="small muted">Address used: {matched.label}</p>}
           <div className="row">
             <button type="button" className="primary" onClick={retry}>
               Retry
@@ -142,14 +202,21 @@ export function LoadingScreen() {
       <h1 ref={headRef} tabIndex={-1}>
         {hasNotes ? 'Before you continue' : 'Your drill is ready'}
       </h1>
-      {area && <p className="muted">Address: {area.addressLabel}</p>}
+      {area && (
+        <p className="muted">
+          Address: {area.addressLabel}
+          {!isDemo && matched && matched.precision && matched.precision !== 'house' && (
+            <> ({matched.precision === 'street' ? 'street-level match' : 'town or place match'}, not your exact house)</>
+          )}
+        </p>
+      )}
       {outsideUs && (
         <section className="box stack">
           <h2 className="verdict">
             <Icon name="warn" />
-            Outside the US: map data may be thinner
+            Outside the US: some data is not used here
           </h2>
-          <p>You can still run a drill. Road and destination data may be incomplete here. Follow your local emergency service.</p>
+          <p>You can still run a drill. US fire perimeters are not shown, and roads and destinations may be less complete in the map data. Follow your local emergency service.</p>
         </section>
       )}
       {fallbacks.length > 0 && (

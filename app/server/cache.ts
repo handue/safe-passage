@@ -48,9 +48,13 @@ interface CacheEntry {
 
 export class HttpError extends Error {
   status: number;
-  constructor(status: number, url: string) {
+  /** Seconds from a Retry-After header, when the service sent one as a number. */
+  retryAfterS?: number;
+  constructor(status: number, url: string, retryAfter?: string | null) {
     super(`HTTP ${status} from ${url}`);
     this.status = status;
+    const s = Number(retryAfter);
+    if (retryAfter && Number.isFinite(s) && s >= 0) this.retryAfterS = s;
   }
 }
 
@@ -81,11 +85,22 @@ const inFlight = new Map<string, Promise<CachedResponse>>();
  * Fetch with a disk cache. Throws on network errors, non-2xx, or a rejected body (unless a stale entry exists).
  * A failed cache write is logged and never turns a good response into an error.
  */
+function cacheFile(req: RequestSpec, dir: string): string {
+  const method = req.method ?? 'GET';
+  const key = req.cacheKey !== undefined ? cacheKey('KEY', req.cacheKey) : cacheKey(method, req.url, req.body);
+  return path.join(dir, `${key}.json`);
+}
+
+/** The cached answer for a request, or null. Never calls the service; ignores expiry. */
+export async function readCached(req: RequestSpec, opts: CacheOptions = {}): Promise<CachedResponse | null> {
+  const entry = await readEntry(cacheFile(req, opts.dir ?? DEFAULT_CACHE_DIR));
+  return entry ? { body: entry.body, fetchedAt: entry.fetchedAt, fromCache: true, stale: false } : null;
+}
+
 export function cachedFetch(req: RequestSpec, opts: CacheOptions = {}): Promise<CachedResponse> {
   const method = req.method ?? 'GET';
   const dir = opts.dir ?? DEFAULT_CACHE_DIR;
-  const key = req.cacheKey !== undefined ? cacheKey('KEY', req.cacheKey) : cacheKey(method, req.url, req.body);
-  const file = path.join(dir, `${key}.json`);
+  const file = cacheFile(req, dir);
   const pending = inFlight.get(file);
   if (pending) return pending;
   const p = fetchOrRead(req, opts, method, dir, file).finally(() => inFlight.delete(file));
@@ -115,7 +130,7 @@ async function fetchOrRead(req: RequestSpec, opts: CacheOptions, method: string,
       signal: AbortSignal.timeout(req.timeoutMs ?? 20000),
     });
     body = await res.text();
-    if (!res.ok) throw new HttpError(res.status, req.url);
+    if (!res.ok) throw new HttpError(res.status, req.url, res.headers.get('retry-after'));
     if (opts.accept && !opts.accept(body)) throw new Error(`Rejected response from ${req.url}`);
     fetchedAt = new Date(now()).toISOString();
   } catch (err) {

@@ -174,6 +174,12 @@ export interface RouteRun {
   /** passMin - closeMin > 0 means short. */
   outcome: 'never_closed' | 'in_time' | 'short';
   arriveMin: number; // at destination, ignoring closures
+  /**
+   * Set by runDrill: when the fire first comes within ~100 m of the destination.
+   * fireMin is Infinity if it never does within the horizon; inGrid false means the
+   * destination is outside the fire area, so the model cannot say (Infinity, not "safe").
+   */
+  destinationFire?: { fireMin: number; beforeArrival: boolean; inGrid: boolean };
 }
 
 export interface Bottleneck {

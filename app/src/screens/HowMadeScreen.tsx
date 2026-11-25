@@ -2,6 +2,7 @@
 import { useApp } from '../app/state';
 import { loadedInfo } from '../app/load';
 import { Tag } from '../ui/Tag';
+import { fmtDist, fmtSquare, unitsFor } from '../ui/units';
 import '../styles/entry.css';
 
 const fmt = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
@@ -32,6 +33,7 @@ export function HowMadeScreen() {
   const planSource = plan.data?.source ?? null;
   const grid = prepared?.fireGrid;
   const none = area ? 'not used' : 'no address yet';
+  const units = unitsFor(area?.country);
 
   return (
     <main className="narrow">
@@ -76,7 +78,10 @@ export function HowMadeScreen() {
               </tr>
               <tr>
                 <td>Roads</td>
-                <td>OpenStreetMap via Overpass (fallback: a second Overpass server)</td>
+                <td>
+                  OpenStreetMap via Overpass. Roads and candidate destinations come in one request. If the server is busy, it waits briefly and tries once more,
+                  then tries a second Overpass server, and gives up after about a minute.
+                </td>
                 <td>
                   <When iso={roads?.at} none={none} />
                 </td>
@@ -158,12 +163,12 @@ export function HowMadeScreen() {
         <h2>How the numbers are worked out</h2>
         <p>
           <b>Fire:</b> our own grid model
-          {grid ? `, ${(grid.size * grid.cellM) / 1000} × ${(grid.size * grid.cellM) / 1000} km at ${grid.cellM} m cells around your home` : ''}. Each step, fire can move
-          to nearby cells; wind and uphill slope make that more likely. The same seed gives the same fire.
+          {grid ? `, ${fmtSquare(grid.size * grid.cellM, units)} in cells of ${fmtDist(grid.cellM, units)} around your home` : ''}. Each step, fire can move
+          to nearby cells; wind and uphill slope make that more likely. Sea cells (ground at sea level) never burn. The same seed gives the same fire.
           {area && area.elevation === null ? ' For this address the ground is treated as flat.' : ''}
         </p>
         <p>
-          <b>Road closes:</b> when the fire reaches a cell within 100 m of the road. Roads outside the fire grid are not modeled.
+          <b>Road closes:</b> when the fire reaches a cell within {fmtDist(100, units)} of the road. Roads outside the fire grid are not modeled.
         </p>
         <p>
           <b>Time needed:</b> your task minutes, one after another, plus drive time to the point on your route that is tightest in this fire: where the fire beats you by the most, or leaves you the least time.
@@ -192,6 +197,11 @@ export function HowMadeScreen() {
           <li>Traffic, crashes, smoke on the road, and downed power lines.</li>
           <li>Wind changes during a drill.</li>
           <li>Whether a destination is open or has room.</li>
+          <li>
+            Whether a destination is safe. A destination inside the fire area can be in the fire's path; the results warn when the simulated fire reaches it. A destination
+            outside the fire area is not modeled at all.
+          </li>
+          <li>Lakes, rivers and reservoirs. Only the sea is treated as ground that cannot burn, and very low land near sea level can be mistaken for sea.</li>
           <li>Delays between a fire starting and an order reaching you.</li>
         </ul>
         <p>Real fires can move much faster than this model.</p>

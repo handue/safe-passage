@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fallbackPlan, sanitizePlanInput, writePlan } from './plan.ts';
+import { backupSentence, fallbackPlan, sanitizePlanInput, withBackupSentence, writePlan } from './plan.ts';
 
 const body = {
   household: { adults: 2, children: 1, needHelpMoving: 1, dogs: 1, catsAndSmallPets: 1, cars: 1 },
@@ -43,6 +43,55 @@ describe('plan', () => {
     expect(p.whenToLeave).not.toContain('take Willow Dr to Ridge Rd');
   });
 
+  it('never says "If X is closed, take X" when the backup also uses X', () => {
+    const shared = { ...body, main: { ...body.main, roadNames: ['Willow Dr', 'Great Western Hwy', 'Highway 9'] }, backup: { ...body.backup, roadNames: ['Willow Dr', 'Great Western Hwy', 'Bathurst Rd'] } };
+    const drill = { neededMin: 25, closeMin: 30, roadName: 'Great Western Hwy', onSharedStretch: false, backupCut: false };
+    const turn = fallbackPlan(sanitizePlanInput({ ...shared, drill, backupTurn: 'west' }));
+    expect(turn.whenToLeave).not.toMatch(/If Great Western Hwy is closed, take [^.]*Great Western Hwy/);
+    expect(turn.whenToLeave).toContain('turn west on Great Western Hwy');
+    expect(turn.whenToLeave).toContain('take Willow Dr, then turn west on Great Western Hwy, then take Bathurst Rd toward D2 Hall');
+    expect(turn.meetingSpot.ifClosed).toBe('D2 Hall, front entrance');
+    // No turn known: say both routes use it, and offer no backup spot.
+    const noTurn = fallbackPlan(sanitizePlanInput({ ...shared, drill, backupTurn: '' }));
+    expect(noTurn.whenToLeave).toContain('Both routes use Great Western Hwy. If it is closed, follow official directions.');
+    expect(noTurn.meetingSpot.ifClosed).toBe('');
+  });
+
+  it('says both routes were closed when the backup is cut in this drill', () => {
+    const p = fallbackPlan(sanitizePlanInput({ ...body, drill: { neededMin: 25, closeMin: 30, roadName: 'Creek Rd', onSharedStretch: false, backupCut: true } }));
+    expect(p.whenToLeave).toContain('closed both routes');
+    expect(p.whenToLeave).toContain('follow official directions');
+    expect(p.whenToLeave).not.toContain('take Willow Dr to Ridge Rd');
+    expect(p.meetingSpot.ifClosed).toBe('');
+    // The plan page shows the "agree on a spot" note itself, so the reason does not repeat it.
+    expect(p.meetingSpot.reason).not.toContain('no backup meeting spot');
+  });
+
+  it('gives no front entrance for an exit point', () => {
+    const p = fallbackPlan(sanitizePlanInput({
+      ...body,
+      main: { ...body.main, destination: 'D1 Exit point', exitPoint: true },
+      backup: { ...body.backup, destination: 'D2 Exit point', exitPoint: true },
+    }));
+    expect(p.meetingSpot.primary).toBe('');
+    expect(p.meetingSpot.ifClosed).toBe('');
+    expect(p.meetingSpot.reason).toContain('not a place to wait');
+    expect(JSON.stringify(p)).not.toContain('front entrance');
+  });
+
+  it('accepts only compass words for the backup turn', () => {
+    expect(sanitizePlanInput({ ...body, backupTurn: 'west' }).backupTurn).toBe('west');
+    expect(sanitizePlanInput({ ...body, backupTurn: '<b>left</b>' }).backupTurn).toBe('');
+  });
+
+  it('replaces the writer\'s closed-road sentences with the calculated one', () => {
+    const input = sanitizePlanInput({ ...body, drill: { neededMin: 25, closeMin: 30, roadName: 'Willow Dr', onSharedStretch: false, backupCut: true } });
+    const text = 'Leave as soon as officials tell you to. Take Willow Dr to Creek Rd. If Willow Dr is closed, take Willow Dr to Ridge Rd.';
+    const out = withBackupSentence(text, input);
+    expect(out).toBe(`Leave as soon as officials tell you to. Take Willow Dr to Creek Rd. ${backupSentence(input)}`);
+    expect(out).not.toContain('take Willow Dr to Ridge Rd');
+  });
+
   it('uses the fallback without a key', async () => {
     const p = await writePlan(sanitizePlanInput(body), { key: '' });
     expect(p.source).toBe('fallback');
@@ -64,6 +113,24 @@ describe('plan', () => {
       expect(calls[0].reasoning_effort).toBe('low');
       expect(calls[1].reasoning_effort).toBeUndefined();
       expect(calls[0].model).toBe('muse-spark-1.3');
+      expect(p.whenToLeave).toContain('If Creek Rd is closed, take Willow Dr to Ridge Rd toward D2 Hall.');
+    } finally {
+      globalThis.fetch = orig;
+    }
+  });
+
+  it('stops the model call when the caller aborts', async () => {
+    const orig = globalThis.fetch;
+    globalThis.fetch = ((_u: string, init: any) => new Promise((_res, rej) => {
+      init.signal.addEventListener('abort', () => rej(Object.assign(new Error('aborted'), { name: 'AbortError' })));
+    })) as unknown as typeof fetch;
+    try {
+      const ac = new AbortController();
+      const pending = writePlan(sanitizePlanInput(body), { key: 'k', signal: ac.signal });
+      ac.abort();
+      const p = await pending;
+      expect(p.source).toBe('fallback');
+      expect(p.note).toBe('Request cancelled');
     } finally {
       globalThis.fetch = orig;
     }

@@ -29,3 +29,11 @@ main.stage.fix-stage { padding: var(--s3) var(--s5); gap: var(--s2); }
 
 /* What each hero number measures, so Before and After compare like with like. */
 .fix-stage .compare .fix-measure { margin: 0; color: var(--ink-2); }
+
+/* Touch: the change checkboxes, their labels and the back link reach 44 px. */
+@media (pointer: coarse), (max-width: 900px) {
+  .fix-list > li > input[type=checkbox] { width: 24px; height: 24px; margin: 10px; }
+  .fix-list label { display: inline-flex; align-items: center; min-height: 44px; }
+  .more-fixes summary { padding-block: 12px; }
+  .fix-actions a:not(.btn) { display: inline-flex; align-items: center; min-height: 44px; }
+}

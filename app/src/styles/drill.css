@@ -55,5 +55,19 @@
 /* Setup: the Start button stays in reach while the side panel is taller than the screen. */
 @media (min-width: 901px) {
   form.side { gap: var(--s4); }
-  form.side > button.primary[type=submit] { position: sticky; bottom: var(--s3); z-index: 1; box-shadow: 0 10px 28px rgba(0, 0, 0, .5); }
+  /* A solid band the width of the panel: text scrolls behind it, never shows around the button. */
+  form.side > .start-bar {
+    position: sticky; bottom: 0; z-index: 1;
+    margin: 0 calc(-1 * var(--s5)) calc(-1 * var(--s5));
+    padding: var(--s3) var(--s5) var(--s4);
+    background: #141d2a;
+    border-top: 1px solid var(--line-soft);
+    box-shadow: 0 -12px 24px rgba(10, 15, 22, .85);
+  }
 }
+.start-bar { display: flex; flex-direction: column; gap: var(--s2); }
+.start-bar p { margin: 0; }
+
+/* Running, narrow screens: the two hero numbers sit above the map (they move into the stage). */
+.run-heroes-top { display: flex; flex-direction: column; gap: var(--s3); }
+.run-demo { margin: 0; }

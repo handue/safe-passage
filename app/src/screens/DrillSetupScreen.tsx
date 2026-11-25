@@ -4,14 +4,24 @@ import { useApp, isDemoWind } from '../app/state';
 import { go } from '../app/router';
 import { MapView } from '../ui/MapView';
 import { Icon } from '../ui/Icon';
-import { isInGrid } from '../engine/fire';
+import { checkIgnitionPoint, type IgnitionPointCheck } from '../engine/ignition';
 import { NIGHT_WAKE_MIN } from '../engine/drill';
 import type { StartTime, Wind, XY } from '../engine/types';
+import { fmtSpeed, localizeKm, speedToMph, speedUnit, speedValue, speedWords, unitsFor } from '../ui/units';
 import '../styles/drill.css';
 
 const COMPASS_ABBR = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
 const COMPASS_WORD = ['north', 'northeast', 'east', 'southeast', 'south', 'southwest', 'west', 'northwest'];
 const STRONG_WIND_MPH = 25;
+/** Slider top: 60 mph, or 100 km/h. */
+const SLIDER_MAX = { mi: 60, km: 100 } as const;
+
+/** Why a clicked point cannot start the fire, or null when it can. */
+export function pickRefusal(check: IgnitionPointCheck): string | null {
+  if (check === 'outside') return 'That point is outside the area the fire model covers. Pick a point closer to home.';
+  if (check === 'water') return 'That point is on the sea, where fire cannot start. Pick a point on land.';
+  return null;
+}
 
 /** Index 0..7 of the nearest 8-way compass direction. */
 function compassIndex(deg: number): number {
@@ -47,7 +57,12 @@ export function DrillSetupScreen() {
 
   if (!prepared || !area) return null;
 
-  const setWind = (w: Wind) => dispatch({ type: 'setup/set', patch: { wind: w } });
+  const units = unitsFor(area.country);
+  // Any later change to the fire clears an old "cannot start here" message.
+  const setWind = (w: Wind) => {
+    setPickMsg(null);
+    dispatch({ type: 'setup/set', patch: { wind: w } });
+  };
   const windIdx = compassIndex(setup.wind.fromDeg);
   const today = area.wind;
   const windService = Object.keys(area.fetchedAt).find((k) => /^wind/i.test(k));
@@ -61,8 +76,9 @@ export function DrillSetupScreen() {
     dispatch({ type: 'setup/set', patch: { ignition: suggestions[i].xy } });
   };
   const pickPoint = (xy: XY) => {
-    if (!isInGrid(prepared.fireGrid, xy)) {
-      setPickMsg('That point is outside the area the fire model covers. Pick a point closer to home.');
+    const refusal = pickRefusal(checkIgnitionPoint(prepared.fireGrid, prepared.elevationPerCell, xy));
+    if (refusal) {
+      setPickMsg(refusal);
       return;
     }
     setPickMsg(null);
@@ -95,6 +111,7 @@ export function DrillSetupScreen() {
             ...(prepared.waysOut.backup ? [{ which: 'backup' as const, style: 'backup' as const }] : []),
           ]}
           wind={setup.wind}
+          units={units}
           ignition={{ suggestions, selected: setup.ignition, onPick: pickPoint }}
           ariaLabel="Map of the roads around home. Click to place the practice fire."
         />
@@ -122,7 +139,7 @@ export function DrillSetupScreen() {
               <label key={`${s.xy.x},${s.xy.y}`}>
                 <input type="radio" name="ignition" checked={selIdx === i} onChange={() => pickSuggestion(i)} />
                 <span className="ig-text">
-                  <span>{i + 1}. {s.label}</span>
+                  <span>{i + 1}. {localizeKm(s.label, units)}</span>
                   <span className="ig-reason">{s.reason}</span>
                 </span>
               </label>
@@ -158,16 +175,16 @@ export function DrillSetupScreen() {
         </fieldset>
 
         <div className="stack-s">
-          <label htmlFor="wind-speed">Wind speed: <output htmlFor="wind-speed">{Math.round(setup.wind.speedMph)}</output> mph</label>
+          <label htmlFor="wind-speed">Wind speed: <output htmlFor="wind-speed">{speedValue(setup.wind.speedMph, units)}</output> {speedUnit(units)}</label>
           <input
             id="wind-speed"
             type="range"
             min={0}
-            max={60}
+            max={SLIDER_MAX[units]}
             step={1}
-            value={Math.round(setup.wind.speedMph)}
-            aria-valuetext={`${Math.round(setup.wind.speedMph)} miles per hour`}
-            onChange={(e) => setWind({ fromDeg: setup.wind.fromDeg, speedMph: Number(e.target.value), source: 'manual' })}
+            value={speedValue(setup.wind.speedMph, units)}
+            aria-valuetext={`${speedValue(setup.wind.speedMph, units)} ${speedWords(units)}`}
+            onChange={(e) => setWind({ fromDeg: setup.wind.fromDeg, speedMph: speedToMph(Number(e.target.value), units), source: 'manual' })}
           />
           <div className="btn-row">
             <button type="button" disabled={!today || usingToday} onClick={() => today && setWind(today)}>
@@ -183,7 +200,7 @@ export function DrillSetupScreen() {
           </div>
           {today ? (
             <span className="small muted">
-              Today: from the {COMPASS_WORD[compassIndex(today.fromDeg)]} at {Math.round(today.speedMph)} mph
+              Today: from the {COMPASS_WORD[compassIndex(today.fromDeg)]} at {fmtSpeed(today.speedMph, units)}
               {windService ? `, ${windService.replace(/^wind:\s*/i, '')}` : ''}
               {fetched ? `, fetched ${fetched}` : ''}.
               {usingToday ? ' In use.' : ''}
@@ -194,7 +211,7 @@ export function DrillSetupScreen() {
           {state.isDemo && isDemoWind(setup.wind) && (
             <span className="small muted">Demo preset: a strong wind day from the northeast, so the same practice fire runs every time. Use today's wind to try the forecast.</span>
           )}
-          <span className="small muted">Strong wind day sets {STRONG_WIND_MPH} mph and keeps the direction. Changing the wind updates the suggested points.</span>
+          <span className="small muted">Strong wind day sets {fmtSpeed(STRONG_WIND_MPH, units)} and keeps the direction. Changing the wind updates the suggested points.</span>
         </div>
 
         <fieldset>
@@ -202,7 +219,15 @@ export function DrillSetupScreen() {
           <div className="seg">
             {(['day', 'night'] as StartTime[]).map((t) => (
               <label key={t}>
-                <input type="radio" name="start" checked={setup.start === t} onChange={() => dispatch({ type: 'setup/set', patch: { start: t } })} />
+                <input
+                  type="radio"
+                  name="start"
+                  checked={setup.start === t}
+                  onChange={() => {
+                    setPickMsg(null);
+                    dispatch({ type: 'setup/set', patch: { start: t } });
+                  }}
+                />
                 {t === 'day' ? 'Day' : 'Night'}
               </label>
             ))}
@@ -224,8 +249,11 @@ export function DrillSetupScreen() {
         )}
 
         <p>In this drill, the order to leave reaches you the moment the fire starts. Real orders can come later.</p>
-        <button className="primary" type="submit" disabled={!setup.ignition}>Start drill</button>
-        {!setup.ignition && <p className="small muted">Choose an ignition point first.</p>}
+        {/* Sticky on desktop with a solid band, so text scrolls behind it and is never half covered. */}
+        <div className="start-bar">
+          <button className="primary" type="submit" disabled={!setup.ignition}>Start drill</button>
+          {!setup.ignition && <p className="small muted">Choose an ignition point first.</p>}
+        </div>
       </form>
     </main>
   );

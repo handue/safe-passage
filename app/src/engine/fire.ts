@@ -72,6 +72,43 @@ export function elevationForCells(grid: FireGrid, elev: ElevationGrid | null): F
   return out;
 }
 
+/**
+ * Cells at or below this elevation count as sea and never burn.
+ * Only the sea is found this way: lakes, rivers and reservoirs above sea level still burn.
+ */
+export const WATER_MAX_ELEV_M = 0.5;
+
+/**
+ * 1 = water (sea) cell, 0 = land, per fire cell. Null when there is no elevation, or when every
+ * cell is at sea level, which reads as a failed elevation service rather than an all-sea area.
+ */
+export function waterMask(elevationPerCell: Float32Array | null): Uint8Array | null {
+  if (!elevationPerCell || elevationPerCell.length === 0) return null;
+  const mask = new Uint8Array(elevationPerCell.length);
+  let water = 0;
+  for (let i = 0; i < elevationPerCell.length; i++) {
+    if (elevationPerCell[i] <= WATER_MAX_ELEV_M) {
+      mask[i] = 1;
+      water++;
+    }
+  }
+  if (water === 0 || water === elevationPerCell.length) return null;
+  return mask;
+}
+
+/** True when the fire cell at cellIndex is sea. False with no elevation data. */
+export function isWaterCell(elevationPerCell: Float32Array | null, cellIndex: number): boolean {
+  const mask = waterMask(elevationPerCell);
+  return mask !== null && mask[cellIndex] === 1;
+}
+
+/** True when xy lies in a sea cell of the grid. Points outside the grid return false (check isInGrid). */
+export function isWaterAt(grid: FireGrid, elevationPerCell: Float32Array | null, xy: XY): boolean {
+  const c = cellOf(grid, xy);
+  if (!c || !elevationPerCell || elevationPerCell.length !== grid.size * grid.size) return false;
+  return isWaterCell(elevationPerCell, c.row * grid.size + c.col);
+}
+
 // 8 neighbor offsets (dcol, drow).
 const NEIGHBORS: [number, number][] = [
   [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1], [1, -1],
@@ -93,6 +130,11 @@ export function simulateFire(grid: FireGrid, params: FireParams): FireResult {
   // Off-grid ignition: no fire is simulated. Callers check isInGrid first (runDrill reports it in coverage).
   if (!start) return result;
 
+  const elev = params.elevationPerCell && params.elevationPerCell.length === count ? params.elevationPerCell : null;
+  // Sea cells never ignite and never spread. An ignition on water gives no fire.
+  const water = waterMask(elev);
+  if (water && water[start.row * n + start.col] === 1) return result;
+
   // Per-direction distance and wind factor (same for every cell).
   const w = windToVector(params.wind.fromDeg);
   const dist = new Float64Array(8);
@@ -105,7 +147,6 @@ export function simulateFire(grid: FireGrid, params: FireParams): FireResult {
     windFactor[k] = Math.exp(C.windCoef * params.wind.speedMph * cos);
   }
 
-  const elev = params.elevationPerCell && params.elevationPerCell.length === count ? params.elevationPerCell : null;
   const step = params.stepMin;
 
   // survive[j] = product of (1 - p_i) over burning neighbors this step; stamp marks candidates.
@@ -131,6 +172,7 @@ export function simulateFire(grid: FireGrid, params: FireParams): FireResult {
         if (c2 < 0 || r2 < 0 || c2 >= n || r2 >= n) continue;
         const j = r2 * n + c2;
         if (ignitionMin[j] >= 0) continue;
+        if (water && water[j] === 1) continue;
         let slopeFactor = 1;
         if (elev) {
           slopeFactor = Math.exp((C.slopeCoef * (elev[j] - elev[i])) / dist[k]);

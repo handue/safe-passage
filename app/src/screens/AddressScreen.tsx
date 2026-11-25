@@ -3,7 +3,7 @@ import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { useApp, initialState, routeShape, DEMO_WIND } from '../app/state';
 import { DEMO, ApiError, fetchArea } from '../app/api';
 import { go } from '../app/router';
-import { searchAddress, startLoad, type Place } from '../app/load';
+import { MAX_QUERY_CHARS, isGenericMatch, searchAddress, startLoad, type Place } from '../app/load';
 import { prepareArea, type PreparedArea } from '../engine/area';
 import { runDrill, type DrillRun } from '../engine/drill';
 import { suggestIgnitions } from '../engine/ignition';
@@ -20,20 +20,33 @@ type Phase =
   | { kind: 'empty' }
   | { kind: 'searching' }
   | { kind: 'notfound'; query: string }
-  | { kind: 'choose'; results: Place[] }
+  | { kind: 'toolong' }
+  | { kind: 'rejected' }
+  | { kind: 'choose'; results: Place[]; generic: boolean }
   | { kind: 'error'; code: string };
 
 export function AddressScreen() {
-  const { dispatch } = useApp();
-  const [query, setQuery] = useState('');
-  const [phase, setPhase] = useState<Phase>({ kind: 'idle' });
+  const { state, dispatch } = useApp();
+  const saved = state.entry;
+  const [query, setQuery] = useState(saved.query);
+  // Coming back to this screen: show the pick list from the last search again.
+  const [phase, setPhase] = useState<Phase>(
+    saved.choices && saved.choices.length > 1 ? { kind: 'choose', results: saved.choices, generic: isGenericMatch(saved.query, saved.choices) } : { kind: 'idle' },
+  );
   const inputRef = useRef<HTMLInputElement>(null);
   const statusRef = useRef<HTMLHeadingElement>(null);
   const hintId = useId();
 
+  // Keep what was typed when leaving the screen, even without a search.
+  const queryRef = useRef(query);
+  queryRef.current = query;
+  useEffect(() => () => dispatch({ type: 'entry/set', patch: { query: queryRef.current } }), [dispatch]);
+
   // Move focus to a new problem or choice box so keyboard and screen-reader users land on it.
   useEffect(() => {
     if (phase.kind === 'notfound' || phase.kind === 'choose' || phase.kind === 'error') statusRef.current?.focus();
+    // Too long or turned down: keep focus in the box so the address can be fixed there.
+    if (phase.kind === 'toolong' || phase.kind === 'rejected') inputRef.current?.focus();
   }, [phase.kind]);
 
   function begin(place: Place) {
@@ -56,14 +69,26 @@ export function AddressScreen() {
       inputRef.current?.focus();
       return;
     }
+    if (q.length > MAX_QUERY_CHARS) {
+      setPhase({ kind: 'toolong' });
+      return;
+    }
+    dispatch({ type: 'entry/set', patch: { query: q, choices: null } });
     setPhase({ kind: 'searching' });
     try {
       const results = await searchAddress(q);
       if (results.length === 0) setPhase({ kind: 'notfound', query: q });
       else if (results.length === 1) begin(results[0]);
-      else setPhase({ kind: 'choose', results: results.slice(0, MAX_CHOICES) });
+      else {
+        const choices = results.slice(0, MAX_CHOICES);
+        dispatch({ type: 'entry/set', patch: { choices } });
+        setPhase({ kind: 'choose', results: choices, generic: isGenericMatch(q, choices) });
+      }
     } catch (err) {
-      setPhase({ kind: 'error', code: err instanceof ApiError ? err.code : 'unknown' });
+      const code = err instanceof ApiError ? err.code : 'unknown';
+      if (code === 'query_too_long') setPhase({ kind: 'toolong' });
+      else if (code === 'query_rejected') setPhase({ kind: 'rejected' });
+      else setPhase({ kind: 'error', code });
     }
   }
 
@@ -73,12 +98,12 @@ export function AddressScreen() {
       ref={inputRef}
       id="addr"
       type="text"
-      placeholder="Street, city, state"
+      placeholder="Street address, town or city"
       autoComplete="street-address"
       value={query}
       onChange={(e) => setQuery(e.target.value)}
-      aria-describedby={phase.kind === 'empty' ? hintId : undefined}
-      aria-invalid={phase.kind === 'empty' || phase.kind === 'notfound' ? true : undefined}
+      aria-describedby={phase.kind === 'empty' || phase.kind === 'toolong' ? hintId : undefined}
+      aria-invalid={phase.kind === 'empty' || phase.kind === 'notfound' || phase.kind === 'toolong' ? true : undefined}
       style={{ flex: '1 1 300px' }}
     />
   );
@@ -109,7 +134,7 @@ export function AddressScreen() {
               <Icon name="warn" />
               We couldn't find that address
             </h2>
-            <p>Check the spelling, or add the city and state.</p>
+            <p>Check the spelling, or add the town or city and the state or region.</p>
             <label htmlFor="addr">Home address</label>
             <div className="row">
               {input}
@@ -129,6 +154,18 @@ export function AddressScreen() {
                 <Icon name="warn" /> Type your home address first.
               </p>
             )}
+            {phase.kind === 'toolong' && (
+              <p id={hintId} className="small entry-hint" role="alert">
+                <Icon name="warn" />
+                That address is too long. Enter the street, the town or city, and the state or region ({MAX_QUERY_CHARS} characters at most).
+              </p>
+            )}
+            {phase.kind === 'rejected' && (
+              <p className="small entry-hint" role="alert">
+                <Icon name="warn" />
+                The address service could not read that. Check the address, or shorten it to the street, town or city, and state.
+              </p>
+            )}
             <div className="row">
               {demoButton}
               <span className="muted">Boulder Creek Library, CA, with a sample household. Nothing to type.</span>
@@ -143,6 +180,11 @@ export function AddressScreen() {
           <section className="box stack" aria-live="polite">
             <h2 ref={statusRef} tabIndex={-1}>Which one is your home?</h2>
             <p className="muted">We found {phase.results.length} matches. Pick one, or search again with more detail.</p>
+            {phase.generic && (
+              <p className="small">
+                <b>Tip:</b> These matches are in different places. Add the town or city and the state or region to your search to narrow them.
+              </p>
+            )}
             <ul className="list entry-choices">
               {phase.results.map((r, i) => (
                 <li key={`${r.lat},${r.lon},${i}`}>

@@ -52,3 +52,10 @@ input[aria-invalid="true"] { border-color: var(--short); }
 
 /* The map note under the map repeats the line key on phones; keep only one. */
 @media (max-width: 900px) { .home-mapkey { display: none; } }
+
+/* Touch: layer toggles and the inline household link reach 44 px. */
+@media (pointer: coarse), (max-width: 900px) {
+  .home-layers label { min-height: 44px; }
+  .home-layers input[type=checkbox] { width: 22px; height: 22px; }
+  .home-link { display: inline-flex; align-items: center; min-height: 44px; padding-inline: var(--s1); }
+}

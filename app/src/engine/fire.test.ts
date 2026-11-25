@@ -7,8 +7,11 @@ import {
   elevationForCells,
   firstIgnitionWithin,
   isInGrid,
+  isWaterAt,
+  isWaterCell,
   makeFireGrid,
   simulateFire,
+  waterMask,
 } from './fire';
 
 const calm: Wind = { fromDeg: 0, speedMph: 0, source: 'manual' };
@@ -131,5 +134,45 @@ describe('queries', () => {
     const near = firstIgnitionWithin(r, { x: 500, y: 0 }, 100);
     expect(near).toBeGreaterThan(0);
     expect(firstIgnitionWithin(r, { x: 50000, y: 0 }, 100)).toBe(Infinity);
+  });
+});
+
+describe('sea cells (coastal grid)', () => {
+  // South half of a 60x60 grid is sea (0 m), north half is land at 40 m.
+  const grid = makeFireGrid(100, 60);
+  const coast = new Float32Array(60 * 60);
+  for (let row = 0; row < 60; row++) for (let col = 0; col < 60; col++) coast[row * 60 + col] = row < 30 ? 0 : 40;
+
+  it('marks sea cells and nothing when elevation is missing or all at sea level', () => {
+    const mask = waterMask(coast)!;
+    expect(mask[0]).toBe(1);
+    expect(mask[59 * 60]).toBe(0);
+    expect(isWaterCell(coast, 10)).toBe(true);
+    expect(isWaterAt(grid, coast, { x: 0, y: -1000 })).toBe(true);
+    expect(isWaterAt(grid, coast, { x: 0, y: 1000 })).toBe(false);
+    expect(isWaterAt(grid, null, { x: 0, y: -1000 })).toBe(false);
+    expect(waterMask(null)).toBeNull();
+    // All cells at 0 m reads as a failed elevation service, not an all-sea area.
+    expect(waterMask(new Float32Array(60 * 60))).toBeNull();
+  });
+
+  it('a land fire blowing out to sea stops at the coast', () => {
+    const r = simulateFire(grid, params({
+      ignition: { x: 0, y: 1000 },
+      wind: { fromDeg: 0, speedMph: 25, source: 'manual' },
+      elevationPerCell: coast,
+    }));
+    let land = 0;
+    for (let i = 0; i < r.ignitionMin.length; i++) {
+      const row = Math.floor(i / 60);
+      if (row < 30) expect(r.ignitionMin[i]).toBe(-1);
+      else if (r.ignitionMin[i] >= 0) land++;
+    }
+    expect(land).toBeGreaterThan(50);
+  });
+
+  it('an ignition on the sea gives no fire', () => {
+    const r = simulateFire(grid, params({ ignition: { x: 0, y: -2000 }, elevationPerCell: coast }));
+    expect(Array.from(r.ignitionMin).every((v) => v === -1)).toBe(true);
   });
 });

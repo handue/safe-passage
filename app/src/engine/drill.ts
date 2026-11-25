@@ -18,10 +18,22 @@ import type {
   WaysOut,
   XY,
 } from './types';
-import { bearingDeg, dist, nearestPointOnPolyline, polylineLength, samplePolyline } from './geo';
+import { bearingDeg, dist, nearestPointOnPolyline, pointSegmentDistance, polylineLength, samplePolyline } from './geo';
 import { nearestNode } from './graph';
 import { pathEdges, routeFromEdges, shortestTimes } from './routing';
-import { cellCenter, firstIgnitionWithin, isInGrid, simulateFire } from './fire';
+import { cellCenter, firstIgnitionWithin, isInGrid, makeFireGrid, simulateFire } from './fire';
+
+// ---------- Displayed minutes ----------
+
+/** The one rounding rule for any minute shown to people (T+N, drive times, margins). Infinity stays Infinity. */
+export function displayMin(min: number): number {
+  return Math.round(min);
+}
+
+/** Difference of two minutes as shown: each value is rounded first, so the sentence and the delta agree. */
+export function displayDiffMin(a: number, b: number): number {
+  return displayMin(a) - displayMin(b);
+}
 
 // ---------- Household tasks ----------
 
@@ -69,7 +81,10 @@ const EXIT_HIGHWAYS = new Set(['motorway', 'trunk', 'primary', 'secondary', 'ter
 const MAX_EXIT_POINTS = 4;
 const BACKUP_PENALTY = 6;
 const BACKUP_MIN_BEARING_DIFF = 45;
-const LONG_NAME_CHARS = 18;
+/** Destinations at least this far outside the fire grid edge count as outside the fire area. */
+const OUTSIDE_GRID_MARGIN_M = 300;
+/** An outside destination is preferred when its drive is at most this many times the nearest one. */
+const OUTSIDE_MAX_DRIVE_RATIO = 1.5;
 
 const KIND_WORD: Record<Destination['kind'], string> = {
   school: 'School',
@@ -92,17 +107,72 @@ function angleDiff(a: number, b: number): number {
   return d > 180 ? 360 - d : d;
 }
 
+/** "D1 School": the code and the kind word. The place's own name is added by destTitle. */
 function shortLabel(prefix: string, d: Destination): string {
-  const word = d.name.length > LONG_NAME_CHARS ? KIND_WORD[d.kind] : d.name;
-  return `${prefix} ${word}`;
+  return `${prefix} ${KIND_WORD[d.kind]}`;
+}
+
+/**
+ * The one way a destination is named in sentences and lists on every screen:
+ * "D2 School (Clear Creek School)", or for an exit point "D1, where Pacific Coast Highway leaves the area".
+ */
+export function destTitle(d: Destination): string {
+  const id = d.label.split(' ')[0] || 'D';
+  const name = d.name.trim();
+  if (d.kind === 'exit_point') {
+    if (/^where\s/i.test(name)) return `${id}, ${name}`;
+    const road = name.replace(/^Exit point,?\s*/i, '').trim();
+    return road ? `${id}, where ${road} leaves the area` : `${id}, where a road leaves the area`;
+  }
+  const short = `${id} ${KIND_WORD[d.kind]}`;
+  const generic = !name || name.toLowerCase() === KIND_WORD[d.kind].toLowerCase() || short.endsWith(name);
+  return generic ? short : `${short} (${name})`;
 }
 
 function emptyWaysOut(homeNodeId: number, destinations: Destination[] = []): WaysOut {
   return { homeNodeId, destinations, main: null, backup: null, sharedFromDoorM: 0, sharedRoadNames: [] };
 }
 
-/** Main and backup routes from home to candidate destinations. */
-export function planWaysOut(graph: RoadGraph, homeXY: XY, places: RawPlace[], proj: Projection): WaysOut {
+/** True when xy lies at least OUTSIDE_GRID_MARGIN_M beyond the fire grid's edge (beyond the dashed square). */
+export function isOutsideFireArea(grid: FireGrid, xy: XY): boolean {
+  const m = OUTSIDE_GRID_MARGIN_M;
+  const extent = grid.size * grid.cellM;
+  return (
+    xy.x < grid.originXY.x - m ||
+    xy.y < grid.originXY.y - m ||
+    xy.x > grid.originXY.x + extent + m ||
+    xy.y > grid.originXY.y + extent + m
+  );
+}
+
+/**
+ * Sort order that puts destinations outside the fire area first when their drive time is within
+ * OUTSIDE_MAX_DRIVE_RATIO of the fastest one; otherwise fastest first. Ties by id.
+ */
+function preferOutside(list: Destination[], times: Float64Array, grid: FireGrid): Destination[] {
+  if (list.length === 0) return list;
+  const fastest = Math.min(...list.map((d) => times[d.nodeId]));
+  const preferred = (d: Destination) =>
+    isOutsideFireArea(grid, d.xy) && times[d.nodeId] <= fastest * OUTSIDE_MAX_DRIVE_RATIO + 1e-9;
+  return [...list].sort(
+    (a, b) =>
+      Number(preferred(b)) - Number(preferred(a)) ||
+      times[a.nodeId] - times[b.nodeId] ||
+      (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+  );
+}
+
+/**
+ * Main and backup routes from home to candidate destinations. Destinations beyond the fire area
+ * are preferred when the extra drive is small (see preferOutside). fireGrid defaults to the drill grid.
+ */
+export function planWaysOut(
+  graph: RoadGraph,
+  homeXY: XY,
+  places: RawPlace[],
+  proj: Projection,
+  fireGrid: FireGrid = makeFireGrid(),
+): WaysOut {
   const homeNode = nearestNode(graph, homeXY);
   if (homeNode === null) return emptyWaysOut(-1);
   const { time, prevEdge } = shortestTimes(graph, homeNode);
@@ -113,8 +183,10 @@ export function planWaysOut(graph: RoadGraph, homeXY: XY, places: RawPlace[], pr
     const xy = proj.toXY(p.at);
     const d = dist(homeXY, xy);
     if (d < PLACE_MIN_M || d > PLACE_MAX_M) continue;
-    const nodeId = nearestNode(graph, xy, PLACE_SNAP_MAX_M);
-    if (nodeId === null || !reachable(nodeId)) continue;
+    // Snap to the nearest road node that can be reached from home, so a place beside a
+    // cut-off service road still counts when a connected road is within PLACE_SNAP_MAX_M.
+    const nodeId = nearestNode(graph, xy, PLACE_SNAP_MAX_M, reachable);
+    if (nodeId === null) continue;
     candidates.push({ id: p.id, label: '', name: p.name, kind: p.kind, xy, nodeId });
   }
   // Places that snap to the same node are the same way out, so count distinct nodes.
@@ -124,10 +196,10 @@ export function planWaysOut(graph: RoadGraph, homeXY: XY, places: RawPlace[], pr
   }
   if (candidates.length === 0) return emptyWaysOut(homeNode);
 
-  // Fastest first; ties by id for determinism.
-  const byTime = (times: Float64Array) => (a: Destination, b: Destination) =>
-    times[a.nodeId] - times[b.nodeId] || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
-  candidates.sort(byTime(time));
+  // Outside the fire area first when the extra drive is small, then fastest; ties by id.
+  const sorted = preferOutside(candidates, time, fireGrid);
+  candidates.length = 0;
+  candidates.push(...sorted);
 
   const mainDest = candidates[0];
   const mainEdges = pathEdges(graph, prevEdge, mainDest.nodeId, homeNode) ?? [];
@@ -139,8 +211,11 @@ export function planWaysOut(graph: RoadGraph, homeXY: XY, places: RawPlace[], pr
     edgeCost: (e) => (onMain.has(segmentKey(graph, e.id)) ? e.minutes * BACKUP_PENALTY : e.minutes),
   });
   // A backup at the main destination's node would just repeat the main route.
-  const others = candidates.filter((d) => d.nodeId !== mainDest.nodeId && Number.isFinite(penalized.time[d.nodeId]));
-  others.sort(byTime(penalized.time));
+  const others = preferOutside(
+    candidates.filter((d) => d.nodeId !== mainDest.nodeId && Number.isFinite(penalized.time[d.nodeId])),
+    penalized.time,
+    fireGrid,
+  );
   const mainBearing = bearingDeg(homeXY, mainDest.xy);
   const backupDest =
     others.find((d) => angleDiff(bearingDeg(homeXY, d.xy), mainBearing) >= BACKUP_MIN_BEARING_DIFF) ??
@@ -153,7 +228,7 @@ export function planWaysOut(graph: RoadGraph, homeXY: XY, places: RawPlace[], pr
     backup = routeFromEdges(graph, edges, backupDest.id);
   }
 
-  // Labels: D1 main, D2 backup, then the rest in drive-time order.
+  // Labels: D1 main, D2 backup, then the rest in the order above.
   const ordered = [mainDest, ...(backupDest ? [backupDest] : [])];
   for (const d of candidates) if (!ordered.includes(d)) ordered.push(d);
   const destinations = ordered.map((d, i) => ({ ...d, label: shortLabel(`D${i + 1}`, d) }));
@@ -171,6 +246,23 @@ export function planWaysOut(graph: RoadGraph, homeXY: XY, places: RawPlace[], pr
   const sharedRoadNames = shared.length > 0 ? routeFromEdges(graph, shared, '').roadNames : [];
 
   return { homeNodeId: homeNode, destinations, main, backup, sharedFromDoorM, sharedRoadNames };
+}
+
+/**
+ * The road both ways out turn onto right where they split, when it is the same named road
+ * (for example one goes north and one south on Central Avenue). A fire near that junction can
+ * close both, so screens must not call this "more than one way out". Null otherwise.
+ */
+export function splitOnSameRoad(graph: RoadGraph, w: Pick<WaysOut, 'main' | 'backup'>): string | null {
+  const { main, backup } = w;
+  if (!main || !backup) return null;
+  let k = 0;
+  while (k < main.edgeIds.length && k < backup.edgeIds.length && segmentKey(graph, main.edgeIds[k]) === segmentKey(graph, backup.edgeIds[k])) k++;
+  const a = main.edgeIds[k];
+  const b = backup.edgeIds[k];
+  if (a === undefined || b === undefined) return null;
+  const name = graph.edges[a].name;
+  return name && name !== 'Unnamed road' && graph.edges[b].name === name ? name : null;
 }
 
 /** Reachable nodes on major roads far from home, farthest first, in distinct directions. */
@@ -194,11 +286,17 @@ function exitPoints(graph: RoadGraph, homeXY: XY, reachable: (nodeId: number) =>
   return picked.map((c) => ({
     id: `exit-${c.id}`,
     label: '',
-    name: `Exit point, ${roadAt.get(c.id)}`,
+    name: exitPointName(roadAt.get(c.id) ?? ''),
     kind: 'exit_point' as const,
     xy: graph.nodes[c.id].xy,
     nodeId: c.id,
   }));
+}
+
+/** "where Highway 9 leaves the area"; unnamed roads read "where an unnamed road leaves the area". */
+export function exitPointName(road: string): string {
+  const named = road.trim() !== '' && road !== 'Unnamed road';
+  return `where ${named ? road : 'an unnamed road'} leaves the area`;
 }
 
 // ---------- Road closures ----------
@@ -348,6 +446,86 @@ export function runRoute(
   return { route, departMin, legs, binding, outcome, arriveMin: departMin + route.driveMin };
 }
 
+// ---------- Fire at the destination ----------
+
+/** The fire counts as reaching a destination when it ignites a cell within this distance. */
+export const DESTINATION_FIRE_RADIUS_M = 100;
+
+/**
+ * When the fire first comes within DESTINATION_FIRE_RADIUS_M of xy, and whether that is before
+ * arriveMin. A destination outside the grid is not modeled: fireMin is Infinity and inGrid false.
+ */
+export function destinationFire(
+  fire: FireResult,
+  xy: XY,
+  arriveMin: number,
+): { fireMin: number; beforeArrival: boolean; inGrid: boolean } {
+  const inGrid = isInGrid(fire.grid, xy);
+  const raw = inGrid ? firstIgnitionWithin(fire, xy, DESTINATION_FIRE_RADIUS_M) : Infinity;
+  const fireMin = raw <= fire.horizonMin ? raw : Infinity;
+  return { fireMin, beforeArrival: fireMin <= arriveMin, inGrid };
+}
+
+// ---------- Does the main route's closure also block the backup? ----------
+
+/** A backup edge on the same road name within this distance of the main closure counts as the same place. */
+export const SAME_CLOSURE_RADIUS_M = 200;
+
+export type BackupBlock = {
+  blocked: boolean;
+  /**
+   * same_edge: the backup uses the very road segment that closes on the main route.
+   * same_road_nearby: the backup uses the same named road within SAME_CLOSURE_RADIUS_M of the closure.
+   * backup_short: the backup's own closure comes before you would pass it.
+   * backup_closes_first: the backup closes no later than the main route does.
+   */
+  reason: 'same_edge' | 'same_road_nearby' | 'backup_short' | 'backup_closes_first' | null;
+  /** Road to name in copy when blocked: the shared road, or the backup's own closing road. */
+  roadName: string | null;
+};
+
+function distToShape(p: XY, shape: XY[]): number {
+  if (shape.length === 1) return dist(p, shape[0]);
+  let best = Infinity;
+  for (let i = 1; i < shape.length; i++) best = Math.min(best, pointSegmentDistance(p, shape[i - 1], shape[i]));
+  return best;
+}
+
+/** True when route uses a road named `name` within radiusM of xy. */
+export function routeUsesRoadNear(graph: RoadGraph, route: Route, name: string, xy: XY, radiusM = SAME_CLOSURE_RADIUS_M): boolean {
+  return route.edgeIds.some((id) => {
+    const e = graph.edges[id];
+    return e.name === name && distToShape(xy, e.shape) <= radiusM;
+  });
+}
+
+/**
+ * Whether "if the main route is closed, take the backup" would be false advice in this drill.
+ * Use it before writing "If X is closed, take <backup>": when blocked, say both ways use X (or the
+ * backup closes too) and to follow official directions instead.
+ */
+export function backupBlockedByMainClosure(graph: RoadGraph, main: RouteRun | null, backup: RouteRun | null): BackupBlock {
+  const none: BackupBlock = { blocked: false, reason: null, roadName: null };
+  if (!backup) return none;
+  const b = main?.binding ?? null;
+  if (b) {
+    const segment = (id: number) => {
+      const e = graph.edges[id];
+      return e.from < e.to ? `${e.from}-${e.to}` : `${e.to}-${e.from}`;
+    };
+    const key = segment(b.edgeId);
+    if (backup.route.edgeIds.some((id) => segment(id) === key)) return { blocked: true, reason: 'same_edge', roadName: b.name };
+    if (routeUsesRoadNear(graph, backup.route, b.name, b.xy)) return { blocked: true, reason: 'same_road_nearby', roadName: b.name };
+  }
+  if (backup.outcome === 'short' && backup.binding) {
+    return { blocked: true, reason: 'backup_short', roadName: backup.binding.name };
+  }
+  if (b && backup.binding && backup.binding.closeMin <= b.closeMin) {
+    return { blocked: true, reason: 'backup_closes_first', roadName: backup.binding.name };
+  }
+  return none;
+}
+
 // ---------- The drill ----------
 
 /** What runDrill needs from prepareArea (area.ts). */
@@ -396,8 +574,19 @@ export function runDrill(
   const { closures, points } = edgeClosuresWithPoints(prepared.graph, fire);
   const tasksMin = tasksMinutes(tasks, setup.start);
   const { waysOut } = prepared;
-  const main = waysOut.main ? runRoute(prepared.graph, waysOut.main, tasksMin, closures, horizonMin, points) : null;
-  const backup = waysOut.backup ? runRoute(prepared.graph, waysOut.backup, tasksMin, closures, horizonMin, points) : null;
+  const destXY = (r: Route): XY => {
+    const d = waysOut.destinations.find((x) => x.id === r.destinationId);
+    if (d) return d.xy;
+    const last = r.edgeIds[r.edgeIds.length - 1];
+    return last === undefined ? { x: 0, y: 0 } : prepared.graph.nodes[prepared.graph.edges[last].to].xy;
+  };
+  const run = (r: Route | null): RouteRun | null => {
+    if (!r) return null;
+    const rr = runRoute(prepared.graph, r, tasksMin, closures, horizonMin, points);
+    return { ...rr, destinationFire: destinationFire(fire, destXY(r), rr.arriveMin) };
+  };
+  const main = run(waysOut.main);
+  const backup = run(waysOut.backup);
 
   const leaving = edgesLeavingGrid(prepared.graph, prepared.fireGrid);
   const unmodeled = (r: Route | null) => (r ? r.edgeIds.filter((id) => leaving.has(id)) : []);
@@ -412,8 +601,8 @@ export function runDrill(
     bottlenecks.push({
       kind: 'road_closed',
       title: 'Road closed by the fire',
-      detail: `${main.binding.name} at T+${Math.round(main.binding.closeMin)}`,
-      minutes: Math.round(main.binding.closeMin),
+      detail: `${main.binding.name} at T+${displayMin(main.binding.closeMin)}`,
+      minutes: displayMin(main.binding.closeMin),
     });
   }
   if (waysOut.sharedFromDoorM >= ONE_WAY_OUT_MIN_M) {
@@ -422,6 +611,17 @@ export function runDrill(
       kind: 'one_way_out',
       title: 'One way out',
       detail: `${waysOut.sharedRoadNames.join(', ')}, first ${miles} mi`,
+    });
+  }
+  // A closure that blocks the backup at the same spot leaves one way out in this fire.
+  const block = backupBlockedByMainClosure(prepared.graph, main, backup);
+  const sharedClosure = block.reason === 'same_edge' || block.reason === 'same_road_nearby';
+  if (sharedClosure && main?.binding && !bottlenecks.some((b) => b.kind === 'one_way_out')) {
+    bottlenecks.push({
+      kind: 'one_way_out',
+      title: 'One way out',
+      detail: `${main.binding.name} closes for both routes at T+${displayMin(main.binding.closeMin)}`,
+      minutes: displayMin(main.binding.closeMin),
     });
   }
   const longest = tasks.reduce<Task | null>((best, t) => (best === null || t.minutes > best.minutes ? t : best), null);
@@ -441,8 +641,15 @@ export function runDrill(
     moments.push({ label: `${binding.name} closes`, min: binding.closeMin });
     moments.push({ label: 'You would reach that point', min: binding.passMin });
   }
+  if (main) {
+    const dest = waysOut.destinations.find((d) => d.id === main.route.destinationId);
+    const name = dest ? destTitle(dest) : 'the destination';
+    moments.push({ label: `${main.outcome === 'short' ? 'You would reach' : 'You reach'} ${name}`, min: main.arriveMin });
+    const df = main.destinationFire;
+    if (df && Number.isFinite(df.fireMin)) moments.push({ label: `Fire reaches ${name}`, min: df.fireMin });
+  }
   const keyMoments = moments
-    .map((m) => ({ label: m.label, min: Math.round(m.min) }))
+    .map((m) => ({ label: m.label, min: displayMin(m.min) }))
     .sort((a, b) => a.min - b.min); // stable: equal minutes keep story order
 
   return { setup, fire, closures, tasksMin, main, backup, bottlenecks, keyMoments, coverage };

@@ -6,7 +6,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { AreaData } from '../src/engine/types.ts';
-import { buildArea, geocode, RoadsUnavailableError, type SourceContext } from './sources.ts';
+import { buildArea, geocode, GeocodeRejectedError, newProgress, RoadsUnavailableError, type AreaProgress, type SourceContext } from './sources.ts';
 import { sanitizePlanInput, writePlan } from './plan.ts';
 
 export const DEFAULT_DEMO_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'demo-area.json');
@@ -14,6 +14,51 @@ export const DEMO_NOTE = 'Live data unavailable: showing the saved demo';
 
 /** With demo=1, serve the saved demo if live data has not arrived by then. */
 export const DEMO_DEADLINE_MS = 25000;
+
+/** Longest address query passed on to the address services. */
+export const MAX_QUERY_CHARS = 200;
+
+/** How long a finished load's status stays readable. */
+const STATUS_KEEP_MS = 120000;
+
+export interface AreaStatus extends AreaProgress {
+  done: boolean;
+  /** Set when the load failed: the same code the /api/area response carries. */
+  error?: string;
+  elapsedMs: number;
+}
+
+interface StatusEntry {
+  progress: AreaProgress;
+  startedAt: number;
+  done: boolean;
+  error?: string;
+}
+
+/** Loads in progress (and recently finished), by the client's `key`. */
+const statuses = new Map<string, StatusEntry>();
+
+function validKey(key: string | null): key is string {
+  return key !== null && /^[A-Za-z0-9_-]{1,64}$/.test(key);
+}
+
+function finishStatus(key: string | null, error?: string): void {
+  const entry = key ? statuses.get(key) : undefined;
+  if (!entry || !key) return;
+  entry.done = true;
+  entry.error = error;
+  setTimeout(() => {
+    if (statuses.get(key) === entry) statuses.delete(key);
+  }, STATUS_KEEP_MS).unref();
+}
+
+export function readStatus(key: string, now = Date.now()): AreaStatus | null {
+  const entry = statuses.get(key);
+  if (!entry) return null;
+  const status: AreaStatus = { ...entry.progress, done: entry.done, elapsedMs: now - entry.startedAt };
+  if (entry.error) status.error = entry.error;
+  return status;
+}
 
 export interface ServerOptions extends SourceContext {
   demoFile?: string;
@@ -75,13 +120,18 @@ async function handleArea(url: URL, res: ServerResponse, opts: ServerOptions): P
   const demo = url.searchParams.get('demo') === '1';
   const demoFile = opts.demoFile ?? DEFAULT_DEMO_FILE;
 
-  const live = buildArea({ home: { lat, lon }, label, country }, opts);
+  const key = url.searchParams.get('key');
+  const progress = newProgress();
+  if (validKey(key)) statuses.set(key, { progress, startedAt: Date.now(), done: false });
+
+  const live = buildArea({ home: { lat, lon }, label, country }, opts, progress);
   let area: AreaData;
   try {
     area = demo ? await withDeadline(live, opts.demoDeadlineMs ?? DEMO_DEADLINE_MS) : await live;
   } catch (err) {
     const saved = demo ? await readDemo(demoFile) : null;
     if (saved) {
+      finishStatus(key);
       sendJson(res, 200, { ...saved, fallbacksUsed: [...saved.fallbacksUsed, DEMO_NOTE] });
       return;
     }
@@ -91,13 +141,17 @@ async function handleArea(url: URL, res: ServerResponse, opts: ServerOptions): P
       area = await live;
     } catch (liveErr) {
       if (liveErr instanceof RoadsUnavailableError) {
-        sendJson(res, 503, { error: 'roads_unavailable' });
+        finishStatus(key, 'roads_unavailable');
+        // reason: 'busy' (map server overloaded), 'timeout' (no answer in time) or 'failed'.
+        sendJson(res, 503, { error: 'roads_unavailable', reason: liveErr.reason });
         return;
       }
+      finishStatus(key, 'internal_error');
       throw liveErr;
     }
   }
   // Outside the live-data try: a failed snapshot write never replaces good live data.
+  finishStatus(key);
   if (demo) await saveDemo(demoFile, area);
   sendJson(res, 200, area);
 }
@@ -113,11 +167,22 @@ export async function handleRequest(req: IncomingMessage, res: ServerResponse, o
         sendJson(res, 400, { error: 'missing_query' });
         return;
       }
+      if (q.length > MAX_QUERY_CHARS) {
+        sendJson(res, 400, { error: 'query_too_long', maxChars: MAX_QUERY_CHARS });
+        return;
+      }
       try {
         sendJson(res, 200, { results: await geocode(q, opts) });
-      } catch {
-        sendJson(res, 502, { error: 'geocode_unavailable' });
+      } catch (err) {
+        // 400: the service answered and refused this query. 502: the service failed or did not answer.
+        if (err instanceof GeocodeRejectedError) sendJson(res, 400, { error: 'query_rejected' });
+        else sendJson(res, 502, { error: 'geocode_unavailable' });
       }
+    } else if (req.method === 'GET' && url.pathname === '/api/area-status') {
+      const key = url.searchParams.get('key');
+      const status = validKey(key) ? readStatus(key) : null;
+      if (status) sendJson(res, 200, status);
+      else sendJson(res, 404, { error: 'unknown_key' });
     } else if (req.method === 'GET' && url.pathname === '/api/area') {
       await handleArea(url, res, opts);
     } else if (req.method === 'POST' && url.pathname === '/api/plan') {
@@ -125,9 +190,14 @@ export async function handleRequest(req: IncomingMessage, res: ServerResponse, o
       if (body === null) {
         sendJson(res, 400, { error: 'bad_body' });
       } else {
-        const plan = await writePlan(sanitizePlanInput(body));
+        // Stop the model call when the browser closes the request (it no longer wants this plan).
+        const controller = new AbortController();
+        res.on('close', () => {
+          if (!res.writableFinished) controller.abort();
+        });
+        const plan = await writePlan(sanitizePlanInput(body), { signal: controller.signal });
         if (plan.note) console.log(`plan: fallback (${plan.note})`);
-        sendJson(res, 200, plan);
+        if (!controller.signal.aborted) sendJson(res, 200, plan);
       }
     } else {
       sendJson(res, 404, { error: 'not_found' });

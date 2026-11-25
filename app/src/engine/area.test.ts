@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { makeProjection } from './geo';
 import { prepareArea } from './area';
 import { compareRuns, defaultTasks, runDrill } from './drill';
-import type { AreaData, DrillSetup, RawRoadWay, Task, XY } from './types';
+import type { AreaData, DrillSetup, ElevationGrid, RawRoadWay, Task, XY } from './types';
+import { cellCenter } from './fire';
+import { checkIgnitionPoint, suggestIgnitions } from './ignition';
 
 // Synthetic area around a home at (0, 0):
-//   Ridge Rd (tertiary) west to a library at (-3500, 400)
+//   Ridge Rd (tertiary) west to a library at (-3200, 420), just inside the fire area
 //   Willow Dr (residential) north from home to a junction J at (0, 400)
 //   Creek Rd (secondary) east from J to a school at (3000, 400)
 const home = { lat: 37.17, lon: -122.12 };
@@ -33,7 +35,7 @@ function syntheticArea(): AreaData {
     ],
     places: [
       { id: 'p-school', name: 'Lincoln Elementary School', kind: 'school', at: proj.toLatLon({ x: 3000, y: 450 }) },
-      { id: 'p-lib', name: 'Ridge Library', kind: 'library', at: proj.toLatLon({ x: -3500, y: 420 }) },
+      { id: 'p-lib', name: 'Ridge Library', kind: 'library', at: proj.toLatLon({ x: -3200, y: 420 }) },
       { id: 'p-near', name: 'Too Close Hall', kind: 'townhall', at: proj.toLatLon({ x: 300, y: 400 }) },
     ],
     elevation: null,
@@ -64,7 +66,7 @@ describe('prepareArea + runDrill end to end', () => {
     expect(w.backup?.roadNames).toEqual(['Willow Dr', 'Ridge Rd']);
     expect(w.sharedFromDoorM).toBeCloseTo(400, 0);
     expect(w.sharedRoadNames).toEqual(['Willow Dr']);
-    expect(w.destinations.map((d) => d.label)).toEqual(['D1 School', 'D2 Ridge Library']);
+    expect(w.destinations.map((d) => d.label)).toEqual(['D1 School', 'D2 Library']);
     expect(prepared.elevationPerCell).toBeNull();
   });
 
@@ -103,10 +105,8 @@ describe('prepareArea + runDrill end to end', () => {
     expect(r.backup?.outcome).toBe('never_closed');
     expect(r.main?.binding).toBeNull();
     expect(r.tasksMin).toBe(33);
-    expect(r.keyMoments).toEqual([
-      { label: 'Order to leave', min: 0 },
-      { label: 'Your car leaves home', min: 33 },
-    ]);
+    expect(r.keyMoments.map((m) => m.label)).toEqual(['Order to leave', 'Your car leaves home', 'You reach D1 School (Lincoln Elementary School)']);
+    expect(r.keyMoments[2].min).toBe(Math.round(33 + r.main!.route.driveMin));
   });
 
   it('is deterministic for the same inputs', () => {
@@ -124,5 +124,41 @@ describe('prepareArea + runDrill end to end', () => {
     const r = runDrill(prepared, tasks, upwindFire);
     expect(r.tasksMin).toBe(4 + 3 + 4 + 3 + 4);
     expect(r.main).not.toBeNull();
+  });
+});
+
+describe('coastal address: the south of the fire area is sea', () => {
+  // Elevation 0 m south of y = -600 (sea), 30 m north of it (land with the roads).
+  function coastal(): AreaData {
+    const n = 61;
+    const values: number[] = [];
+    for (let row = 0; row < n; row++) for (let col = 0; col < n; col++) values.push(-3000 + row * 100 < -600 ? 0 : 30);
+    const elevation: ElevationGrid = { rows: n, cols: n, originXY: { x: -3000, y: -3000 }, spacing: 100, values };
+    return { ...syntheticArea(), elevation };
+  }
+  const prepared = prepareArea(coastal());
+  const seaFire: DrillSetup = { ...upwindFire, ignition: { x: 1500, y: -1800 } };
+
+  it('a fire lit on the sea does not burn and closes nothing', () => {
+    expect(checkIgnitionPoint(prepared.fireGrid, prepared.elevationPerCell, seaFire.ignition)).toBe('water');
+    const r = runDrill(prepared, task(120), seaFire);
+    expect(Array.from(r.fire.ignitionMin).every((v) => v === -1)).toBe(true);
+    expect(r.main?.outcome).toBe('never_closed');
+  });
+
+  it('a fire on land stays out of the sea and can still close the main road', () => {
+    const r = runDrill(prepared, task(120), { ...upwindFire, ignition: { x: 1500, y: -300 } });
+    const g = prepared.fireGrid;
+    for (let i = 0; i < r.fire.ignitionMin.length; i++) {
+      const c = cellCenter(g, i % g.size, Math.floor(i / g.size));
+      if (c.y < -800) expect(r.fire.ignitionMin[i]).toBe(-1);
+    }
+    expect(r.main?.outcome).toBe('short');
+  });
+
+  it('suggested ignition points are all on land', () => {
+    const picks = suggestIgnitions(prepared.fireGrid, prepared.elevationPerCell, upwindFire.wind, prepared.homeXY, []);
+    expect(picks.length).toBeGreaterThan(0);
+    for (const p of picks) expect(checkIgnitionPoint(prepared.fireGrid, prepared.elevationPerCell, p.xy)).toBe('ok');
   });
 });

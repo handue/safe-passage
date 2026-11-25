@@ -263,3 +263,9 @@ label.row { flex-wrap: nowrap; align-items: flex-start; }
 .map text.t-dest { font-size: 23px !important; }
 .sources td:nth-child(3), .sources th:nth-child(3) { white-space: nowrap; }
 @media (max-width: 900px) { input[type=range] { min-height: 44px; } }
+
+/* Touch: the shared header links and the setup option chips reach 44 px. */
+@media (pointer: coarse), (max-width: 900px) {
+  .top .brand, .top .end a, .steps a, .steps .locked { display: inline-flex; align-items: center; min-height: 44px; }
+  .seg label { min-height: 44px; }
+}

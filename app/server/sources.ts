@@ -2,25 +2,39 @@
 // Each source has a primary service and, where one exists, a fallback.
 
 import type { AreaData, ElevationGrid, LatLon, RawPlace, RawRoadWay, Wind, XY } from '../src/engine/types.ts';
-import { cachedFetch, type CacheOptions, type Fetcher } from './cache.ts';
+import { cachedFetch, HttpError, readCached, type CacheOptions, type Fetcher, type RequestSpec } from './cache.ts';
 
 export const USER_AGENT = 'SafePassage/0.1 (wildfire drill app)';
 
 export interface SourceContext {
   cacheDir?: string;
   fetcher?: Fetcher;
+  /** Overrides for the Overpass time limits (tests use short ones). */
+  overpassTiming?: Partial<OverpassTiming>;
 }
+
+/** How exactly the match places home: at the house, somewhere on the street, or only a town or landmark. */
+export type GeocodePrecision = 'house' | 'street' | 'place';
 
 export interface GeocodeResult {
   label: string;
   lat: number;
   lon: number;
   country: string;
+  precision: GeocodePrecision;
 }
 
+/** The address services answered but turned the query down (a 4xx other than rate limiting). */
+export class GeocodeRejectedError extends Error {}
+
+/** Why the map data could not be loaded: the server was busy, it ran out of time, or it failed another way. */
+export type RoadsFailure = 'busy' | 'timeout' | 'failed';
+
 export class RoadsUnavailableError extends Error {
-  constructor(cause: unknown) {
+  reason: RoadsFailure;
+  constructor(cause: unknown, reason: RoadsFailure = 'failed') {
     super(`Roads unavailable: ${String(cause)}`);
+    this.reason = reason;
   }
 }
 
@@ -86,21 +100,102 @@ const round6 = (n: number) => Math.round(n * 1e6) / 1e6;
 
 const nominatimGate = makeGate(1000);
 
+interface NominatimAddress {
+  house_number?: string;
+  road?: string;
+  town?: string;
+  village?: string;
+  suburb?: string;
+  hamlet?: string;
+  city?: string;
+  county?: string;
+  state?: string;
+  postcode?: string;
+  country?: string;
+  country_code?: string;
+}
+
 interface NominatimHit {
   display_name: string;
+  name?: string;
   lat: string;
   lon: string;
-  address?: { country_code?: string };
+  address?: NominatimAddress;
+}
+
+/**
+ * A short label from the address parts: name, "house number road", town before city, "state postcode", country.
+ * Falls back to display_name when there are no parts.
+ */
+export function nominatimLabel(h: NominatimHit): string {
+  const a = h.address;
+  if (!a) return h.display_name;
+  const parts: string[] = [];
+  const name = h.name?.trim();
+  if (name && name !== a.road) parts.push(name);
+  if (a.road) parts.push(a.house_number ? `${a.house_number} ${a.road}` : a.road);
+  const local = a.town ?? a.village ?? a.suburb ?? a.hamlet;
+  if (local) parts.push(local);
+  if (a.city && a.city !== local) parts.push(a.city);
+  if (!local && !a.city && a.county) parts.push(a.county);
+  const region = [a.state, a.postcode].filter(Boolean).join(' ');
+  if (region) parts.push(region);
+  if (a.country) parts.push(a.country);
+  return parts.length >= 2 ? parts.join(', ') : h.display_name;
+}
+
+export function nominatimPrecision(a: NominatimAddress | undefined): GeocodePrecision {
+  if (a?.house_number && a.road) return 'house';
+  if (a?.road) return 'street';
+  return 'place';
+}
+
+/** Keeps the first result for each label, so the pick list never shows the same line twice. */
+export function uniqueByLabel(results: GeocodeResult[]): GeocodeResult[] {
+  const seen = new Set<string>();
+  return results.filter((r) => {
+    const key = r.label.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 export function parseNominatim(body: string): GeocodeResult[] {
-  const hits = JSON.parse(body) as NominatimHit[];
-  return hits.map((h) => ({
-    label: h.display_name,
-    lat: Number(h.lat),
-    lon: Number(h.lon),
-    country: (h.address?.country_code ?? '').toLowerCase(),
-  }));
+  return resultsFromHits(JSON.parse(body) as NominatimHit[]);
+}
+
+/**
+ * True when two hits are the same place: same country and postcode, and a street or place name in
+ * common (Toronto "315 Main Street" and "Main Street, Main Bus Terminal", both M4C 1L3).
+ */
+function samePlace(a: NominatimHit, b: NominatimHit): boolean {
+  const x = a.address;
+  const y = b.address;
+  if (!x?.postcode || x.postcode !== y?.postcode || x.country_code !== y.country_code) return false;
+  const names = (h: NominatimHit) => [h.address?.road, h.name].filter((n): n is string => !!n && n.trim() !== '').map((n) => n.toLowerCase());
+  const nb = names(b);
+  return names(a).some((n) => nb.includes(n));
+}
+
+/** US matches first (a US-focused tool), keeping the service's order otherwise. */
+function usFirst(hits: NominatimHit[]): NominatimHit[] {
+  const us = (h: NominatimHit) => (h.address?.country_code ?? '').toLowerCase() === 'us';
+  return [...hits.filter(us), ...hits.filter((h) => !us(h))];
+}
+
+function resultsFromHits(all: NominatimHit[]): GeocodeResult[] {
+  const hits: NominatimHit[] = [];
+  for (const h of usFirst(all)) if (!hits.some((k) => samePlace(k, h))) hits.push(h);
+  return uniqueByLabel(
+    hits.map((h) => ({
+      label: nominatimLabel(h),
+      lat: Number(h.lat),
+      lon: Number(h.lon),
+      country: (h.address?.country_code ?? '').toLowerCase(),
+      precision: nominatimPrecision(h.address),
+    })),
+  );
 }
 
 interface CensusResponse {
@@ -109,14 +204,39 @@ interface CensusResponse {
 
 export function parseCensus(body: string): GeocodeResult[] {
   const matches = (JSON.parse(body) as CensusResponse).result?.addressMatches ?? [];
-  return matches.slice(0, 5).map((m) => ({
-    label: m.matchedAddress,
-    lat: m.coordinates.y,
-    lon: m.coordinates.x,
-    country: 'us',
-  }));
+  return uniqueByLabel(
+    matches.slice(0, 5).map((m) => ({
+      label: m.matchedAddress,
+      lat: m.coordinates.y,
+      lon: m.coordinates.x,
+      country: 'us',
+      precision: 'house' as const,
+    })),
+  );
 }
 
+/** True when a hit names only a big city (Sydney for Katoomba), with no town or suburb. */
+export function lacksLocality(h: NominatimHit): boolean {
+  const a = h.address;
+  return !!a && !!a.city && !(a.town ?? a.village ?? a.suburb ?? a.hamlet);
+}
+
+/** The town or suburb from a Nominatim reverse lookup, or null. Never the same as `city`. */
+export function localityFromReverse(body: string, city: string | undefined): string | null {
+  const a = (JSON.parse(body) as NominatimHit).address;
+  const local = a ? a.town ?? a.village ?? a.suburb ?? a.hamlet : undefined;
+  return local && local !== city ? local : null;
+}
+
+/** True when the service answered and refused the query itself (not rate limiting). */
+function isRejection(err: unknown): boolean {
+  return err instanceof HttpError && err.status >= 400 && err.status < 500 && err.status !== 408 && err.status !== 429;
+}
+
+/**
+ * Nominatim first, then the US Census geocoder. Throws GeocodeRejectedError when a service turned the
+ * query down, or the last error when both services failed.
+ */
 export async function geocode(q: string, ctx: SourceContext = {}): Promise<GeocodeResult[]> {
   const query = q.trim();
   const base = ctx.fetcher ?? fetch;
@@ -126,7 +246,7 @@ export async function geocode(q: string, ctx: SourceContext = {}): Promise<Geoco
     return base(url, init);
   };
 
-  let failures = 0;
+  const errors: unknown[] = [];
   try {
     const url = `https://nominatim.openstreetmap.org/search?${new URLSearchParams({
       q: query,
@@ -138,10 +258,23 @@ export async function geocode(q: string, ctx: SourceContext = {}): Promise<Geoco
       { url, headers: { 'User-Agent': USER_AGENT } },
       { dir: ctx.cacheDir, fetcher: gated, accept: isJson },
     );
-    const results = parseNominatim(res.body).filter((r) => Number.isFinite(r.lat) && Number.isFinite(r.lon));
+    const hits = JSON.parse(res.body) as NominatimHit[];
+    // A hit that names only a big city gets its town or suburb from a reverse lookup (first hit only).
+    const first = hits[0];
+    if (first && lacksLocality(first)) {
+      try {
+        const rev = `https://nominatim.openstreetmap.org/reverse?${new URLSearchParams({ lat: first.lat, lon: first.lon, format: 'json', zoom: '14', addressdetails: '1' })}`;
+        const r = await cachedFetch({ url: rev, headers: { 'User-Agent': USER_AGENT } }, { dir: ctx.cacheDir, fetcher: gated, accept: isJson });
+        const local = localityFromReverse(r.body, first.address?.city);
+        if (local && first.address) first.address = { ...first.address, suburb: local };
+      } catch {
+        // Keep the city-only label.
+      }
+    }
+    const results = resultsFromHits(hits).filter((r) => Number.isFinite(r.lat) && Number.isFinite(r.lon));
     if (results.length > 0) return results;
-  } catch {
-    failures++;
+  } catch (err) {
+    errors.push(err);
   }
 
   try {
@@ -153,8 +286,9 @@ export async function geocode(q: string, ctx: SourceContext = {}): Promise<Geoco
     const res = await cachedFetch({ url, headers: { 'User-Agent': USER_AGENT } }, opts(ctx, { accept: isJson }));
     return parseCensus(res.body);
   } catch (err) {
-    failures++;
-    if (failures === 2) throw err;
+    errors.push(err);
+    if (errors.some(isRejection)) throw new GeocodeRejectedError(`Address query rejected: ${String(err)}`);
+    if (errors.length === 2) throw err;
     return [];
   }
 }
@@ -166,7 +300,7 @@ export const OVERPASS_ENDPOINTS = [
   'https://overpass.kumi.systems/api/interpreter',
 ];
 
-interface OsmElement {
+export interface OsmElement {
   type: 'node' | 'way' | 'relation';
   id: number;
   lat?: number;
@@ -180,51 +314,215 @@ interface OsmElement {
 function isCompleteOverpass(body: string): boolean {
   try {
     const json = JSON.parse(body) as { elements?: unknown; remark?: string };
-    return Array.isArray(json.elements) && !(json.remark && /error|timed out/i.test(json.remark));
+    return Array.isArray(json.elements) && !(json.remark && /error|timed out|out of memory/i.test(json.remark));
   } catch {
     return false;
   }
 }
 
-/** Per-endpoint timeout, a little above the query's own [timeout:90]. */
-export const OVERPASS_TIMEOUT_MS = 95000;
-/** Total time for one Overpass query across all endpoints. */
-export const OVERPASS_BUDGET_MS = 150000;
+/**
+ * Time limits for the one Overpass query per address. The main server gets one retry after a
+ * "busy" answer (429, 502, 504); the backup mirror gets a short attempt; the whole call fits in budgetMs.
+ */
+export interface OverpassTiming {
+  budgetMs: number;
+  primaryMs: number;
+  mirrorMs: number;
+  /** Longest wait taken from a Retry-After header. */
+  retryCapMs: number;
+  /** Wait before the retry when the server sent no Retry-After. */
+  retryDefaultMs: number;
+}
 
-async function overpass(query: string, ctx: SourceContext): Promise<{ elements: OsmElement[]; fetchedAt: string }> {
-  let lastErr: unknown = new Error('no Overpass endpoint');
-  const deadline = Date.now() + OVERPASS_BUDGET_MS;
-  for (const endpoint of OVERPASS_ENDPOINTS) {
-    const left = deadline - Date.now();
-    if (left <= 0) break;
-    try {
-      const res = await cachedFetch(
-        {
-          method: 'POST',
-          url: endpoint,
-          body: `data=${encodeURIComponent(query)}`,
-          headers: { 'User-Agent': USER_AGENT, 'Content-Type': 'application/x-www-form-urlencoded' },
-          timeoutMs: Math.min(OVERPASS_TIMEOUT_MS, left),
-          // Same entry for every endpoint, so a cached answer is used before any live call.
-          cacheKey: `overpass:${query}`,
-        },
-        opts(ctx, { accept: isCompleteOverpass }),
-      );
-      return { elements: (JSON.parse(res.body) as { elements: OsmElement[] }).elements, fetchedAt: res.fetchedAt };
-    } catch (err) {
-      console.warn(`Overpass ${endpoint} failed: ${String(err)}`);
-      lastErr = err;
+// Measured 2026-11-25: overpass-api.de took 70-80 s for a full-size cold query (even small
+// queries took ~40 s), so the main attempt must allow well over a minute.
+export const OVERPASS_TIMING: OverpassTiming = {
+  budgetMs: 110000,
+  primaryMs: 95000,
+  mirrorMs: 30000,
+  retryCapMs: 8000,
+  retryDefaultMs: 3000,
+};
+
+/** An attempt with less time than this left is not started. */
+const MIN_ATTEMPT_MS = 5000;
+
+const BUSY_STATUS = new Set([429, 502, 504]);
+
+function isBusy(err: unknown): boolean {
+  return err instanceof HttpError && BUSY_STATUS.has(err.status);
+}
+
+function isTimeout(err: unknown): boolean {
+  const name = (err as { name?: unknown } | null)?.name;
+  return name === 'TimeoutError' || name === 'AbortError';
+}
+
+/** Runs one task at a time, in call order. A failed task does not block the next. */
+export function makeLock(): <T>(task: () => Promise<T>) => Promise<T> {
+  let tail: Promise<unknown> = Promise.resolve();
+  return <T>(task: () => Promise<T>) => {
+    const run = tail.then(task, task);
+    tail = run.catch(() => {});
+    return run;
+  };
+}
+
+/** Rejects when the signal aborts, even if `p` never settles. */
+function untilAborted<T>(p: Promise<T>, signal: AbortSignal | null | undefined): Promise<T> {
+  if (!signal) return p;
+  return new Promise<T>((resolve, reject) => {
+    if (signal.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener('abort', onAbort, { once: true });
+    p.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
+  });
+}
+
+/** One Overpass call at a time from this process, so our own queries never compete for the per-IP slots. */
+const overpassLock = makeLock();
+
+function lockedFetcher(base: Fetcher): Fetcher {
+  return (url, init) =>
+    overpassLock(async () => {
+      const res = await untilAborted(base(url, init), init?.signal);
+      const text = await untilAborted(res.text(), init?.signal);
+      return new Response(text, { status: res.status, headers: res.headers });
+    });
+}
+
+/** Where the map data came from, for the loading screen. */
+export type MapServer = 'main' | 'backup' | 'cache';
+
+/** Live state of one area load. buildArea updates it; GET /api/area-status returns it. */
+export type PartState = 'waiting' | 'working' | 'done' | 'failed';
+
+export interface AreaProgress {
+  roads: PartState;
+  places: PartState;
+  terrain: PartState;
+  wind: PartState;
+  /** Overpass attempts started so far (0 before the first, 1 on the first try). */
+  mapAttempt: number;
+  mapServer: MapServer | null;
+  /** True once the main map server has answered "busy". */
+  mapBusy: boolean;
+}
+
+export function newProgress(): AreaProgress {
+  return { roads: 'waiting', places: 'waiting', terrain: 'waiting', wind: 'waiting', mapAttempt: 0, mapServer: null, mapBusy: false };
+}
+
+interface OverpassResult {
+  elements: OsmElement[];
+  fetchedAt: string;
+}
+
+async function overpass(query: string, ctx: SourceContext, progress?: AreaProgress): Promise<OverpassResult> {
+  const timing = { ...OVERPASS_TIMING, ...ctx.overpassTiming };
+  const deadline = Date.now() + timing.budgetMs;
+  const fetcher = lockedFetcher(ctx.fetcher ?? fetch);
+  const [primary, mirror] = OVERPASS_ENDPOINTS;
+
+  const attempt = async (endpoint: string, server: MapServer, capMs: number): Promise<OverpassResult> => {
+    if (progress) {
+      progress.mapAttempt++;
+      progress.mapServer = server;
+    }
+    const res = await cachedFetch(
+      {
+        method: 'POST',
+        url: endpoint,
+        body: `data=${encodeURIComponent(query)}`,
+        headers: { 'User-Agent': USER_AGENT, 'Content-Type': 'application/x-www-form-urlencoded' },
+        timeoutMs: Math.min(capMs, deadline - Date.now()),
+        // Same entry for every endpoint, so a cached answer is used before any live call.
+        cacheKey: `overpass:${query}`,
+      },
+      { dir: ctx.cacheDir, fetcher, accept: isCompleteOverpass },
+    );
+    if (progress && res.fromCache) progress.mapServer = 'cache';
+    return { elements: (JSON.parse(res.body) as { elements: OsmElement[] }).elements, fetchedAt: res.fetchedAt };
+  };
+  const left = () => deadline - Date.now();
+  const errors: unknown[] = [];
+  const failWith = (err: unknown, where: string) => {
+    console.warn(`Overpass ${where} failed: ${String(err)}`);
+    errors.push(err);
+  };
+
+  try {
+    return await attempt(primary, 'main', timing.primaryMs);
+  } catch (err) {
+    failWith(err, primary);
+    if (isBusy(err)) {
+      if (progress) progress.mapBusy = true;
+      const after = (err as HttpError).retryAfterS;
+      const wait = Math.min(timing.retryCapMs, after !== undefined ? after * 1000 : timing.retryDefaultMs);
+      if (left() - wait >= MIN_ATTEMPT_MS) {
+        await sleep(wait);
+        try {
+          return await attempt(primary, 'main', timing.primaryMs);
+        } catch (err2) {
+          failWith(err2, `${primary} (retry)`);
+        }
+      }
     }
   }
-  throw lastErr;
+  if (left() >= MIN_ATTEMPT_MS) {
+    try {
+      return await attempt(mirror, 'backup', timing.mirrorMs);
+    } catch (err) {
+      failWith(err, mirror);
+    }
+  }
+  const last = errors[errors.length - 1] ?? new Error('Overpass: no time left');
+  const reason: RoadsFailure = errors.some(isBusy) ? 'busy' : errors.length === 0 || errors.some(isTimeout) ? 'timeout' : 'failed';
+  throw new RoadsUnavailableError(last, reason);
 }
 
 const NEAR_HIGHWAYS = '^(motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|service)(_link)?$';
 const FAR_HIGHWAYS = '^((motorway|trunk|primary|secondary|tertiary)(_link)?|unclassified)$';
+const MINOR_HIGHWAYS = '^(unclassified|residential|living_street|service)$';
+/** Minor roads are also loaded this close to each candidate place, so places beyond 3 km can be reached. */
+export const PLACE_ROADS_M = 600;
 
-export function roadsQuery(home: LatLon): string {
+const PLACE_AMENITY = '["amenity"~"^(school|community_centre|townhall|library)$"]["name"]';
+const PLACE_ASSEMBLY = '["emergency"="assembly_point"]["name"]';
+
+/**
+ * One query for the whole map: candidate places (with centers and tags), then the roads, then the road nodes.
+ * Minor roads within 3 km of home and within PLACE_ROADS_M of each place; major roads within 8 km.
+ */
+export function mapQuery(home: LatLon): string {
   const at = `${round6(home.lat)},${round6(home.lon)}`;
   return [
+    '[out:json][timeout:40][maxsize:134217728];',
+    '(',
+    `  node(around:8000,${at})${PLACE_AMENITY};`,
+    `  way(around:8000,${at})${PLACE_AMENITY};`,
+    `  node(around:8000,${at})${PLACE_ASSEMBLY};`,
+    `  way(around:8000,${at})${PLACE_ASSEMBLY};`,
+    ')->.places;',
+    '.places out center tags;',
+    '(',
+    `  way(around:3000,${at})["highway"~"${NEAR_HIGHWAYS}"];`,
+    `  way(around:8000,${at})["highway"~"${FAR_HIGHWAYS}"];`,
+    `  way(around.places:${PLACE_ROADS_M})["highway"~"${MINOR_HIGHWAYS}"];`,
+    ')->.roads;',
+    '.roads out body;',
+    'node(w.roads);',
+    'out skel qt;',
+  ].join('\n');
+}
+
+/** The two separate queries used before mapQuery. Read only from the cache, so areas loaded earlier stay instant. */
+function legacyQueries(home: LatLon): [string, string] {
+  const at = `${round6(home.lat)},${round6(home.lon)}`;
+  const roads = [
     '[out:json][timeout:90];',
     '(',
     `  way(around:3000,${at})["highway"~"${NEAR_HIGHWAYS}"];`,
@@ -234,6 +532,21 @@ export function roadsQuery(home: LatLon): string {
     '>;',
     'out skel qt;',
   ].join('\n');
+  const places = [
+    '[out:json][timeout:60];',
+    '(',
+    `  node(around:8000,${at})${PLACE_AMENITY};`,
+    `  way(around:8000,${at})${PLACE_AMENITY};`,
+    `  node(around:8000,${at})${PLACE_ASSEMBLY};`,
+    `  way(around:8000,${at})${PLACE_ASSEMBLY};`,
+    ');',
+    'out center tags;',
+  ].join('\n');
+  return [roads, places];
+}
+
+function overpassSpec(query: string): RequestSpec {
+  return { method: 'POST', url: OVERPASS_ENDPOINTS[0], cacheKey: `overpass:${query}` };
 }
 
 /** "25 mph" -> 25; "40" or "40 km/h" -> km/h converted to mph; anything else (none, signals, US:urban) -> undefined. */
@@ -317,23 +630,15 @@ export function parseRoads(elements: OsmElement[], home?: LatLon): RawRoadWay[] 
   return roads;
 }
 
-export function placesQuery(home: LatLon): string {
-  const at = `${round6(home.lat)},${round6(home.lon)}`;
-  const amenity = '["amenity"~"^(school|community_centre|townhall|library)$"]["name"]';
-  const assembly = '["emergency"="assembly_point"]["name"]';
-  return [
-    '[out:json][timeout:60];',
-    '(',
-    `  node(around:8000,${at})${amenity};`,
-    `  way(around:8000,${at})${amenity};`,
-    `  node(around:8000,${at})${assembly};`,
-    `  way(around:8000,${at})${assembly};`,
-    ');',
-    'out center tags;',
-  ].join('\n');
-}
-
 const PLACE_KINDS = ['school', 'community_centre', 'townhall', 'library'] as const;
+
+/** Abandoned, disused or former buildings are never offered as destinations. */
+export function isDefunctPlace(tags: Record<string, string>): boolean {
+  const yes = (v: string | undefined) => v !== undefined && v !== 'no';
+  if (yes(tags.abandoned) || yes(tags.disused)) return true;
+  if (tags['abandoned:amenity'] || tags['disused:amenity']) return true;
+  return /\b(abandoned|disused)\b|\(former\)/i.test(tags.name ?? '');
+}
 
 export function parsePlaces(elements: OsmElement[]): RawPlace[] {
   const places: RawPlace[] = [];
@@ -343,23 +648,40 @@ export function parsePlaces(elements: OsmElement[]): RawPlace[] {
     const name = tags.name?.trim();
     const at = el.type === 'node' && el.lat !== undefined && el.lon !== undefined ? { lat: el.lat, lon: el.lon } : el.center;
     const id = `${el.type}/${el.id}`;
-    if (!name || !at || seen.has(id)) continue;
-    seen.add(id);
+    if (!name || !at || seen.has(id) || isDefunctPlace(tags)) continue;
     const amenity = PLACE_KINDS.find((k) => k === tags.amenity);
-    const kind: RawPlace['kind'] = amenity ?? (tags.emergency === 'assembly_point' ? 'assembly_point' : 'other');
-    places.push({ id, name, kind, at: { lat: at.lat, lon: at.lon } });
+    const assembly = tags.emergency === 'assembly_point';
+    // Road elements share the response; only real candidate places count.
+    if (!amenity && !assembly) continue;
+    seen.add(id);
+    places.push({ id, name, kind: amenity ?? 'assembly_point', at: { lat: at.lat, lon: at.lon } });
   }
   return places;
 }
 
-export async function fetchRoads(home: LatLon, ctx: SourceContext = {}): Promise<{ roads: RawRoadWay[]; fetchedAt: string }> {
-  const { elements, fetchedAt } = await overpass(roadsQuery(home), ctx);
-  return { roads: parseRoads(elements, home), fetchedAt };
+export interface MapData {
+  roads: RawRoadWay[];
+  places: RawPlace[];
+  fetchedAt: string;
 }
 
-export async function fetchPlaces(home: LatLon, ctx: SourceContext = {}): Promise<{ places: RawPlace[]; fetchedAt: string }> {
-  const { elements, fetchedAt } = await overpass(placesQuery(home), ctx);
-  return { places: parsePlaces(elements), fetchedAt };
+/** Roads and candidate places for one address, from one Overpass response (or the cache). */
+export async function fetchMap(home: LatLon, ctx: SourceContext = {}, progress?: AreaProgress): Promise<MapData> {
+  const [legacyRoads, legacyPlaces] = legacyQueries(home);
+  const cacheOpts = { dir: ctx.cacheDir };
+  const [oldRoads, oldPlaces] = await Promise.all([
+    readCached(overpassSpec(legacyRoads), cacheOpts),
+    readCached(overpassSpec(legacyPlaces), cacheOpts),
+  ]);
+  const isNew = await readCached(overpassSpec(mapQuery(home)), cacheOpts);
+  if (!isNew && oldRoads && oldPlaces && isCompleteOverpass(oldRoads.body) && isCompleteOverpass(oldPlaces.body)) {
+    if (progress) progress.mapServer = 'cache';
+    const roadEls = (JSON.parse(oldRoads.body) as { elements: OsmElement[] }).elements;
+    const placeEls = (JSON.parse(oldPlaces.body) as { elements: OsmElement[] }).elements;
+    return { roads: parseRoads(roadEls, home), places: parsePlaces(placeEls), fetchedAt: oldRoads.fetchedAt };
+  }
+  const { elements, fetchedAt } = await overpass(mapQuery(home), ctx, progress);
+  return { roads: parseRoads(elements, home), places: parsePlaces(elements), fetchedAt };
 }
 
 // ---------- Elevation ----------
@@ -379,10 +701,10 @@ export function gridPoints(home: LatLon, n: number, spacing: number): { originXY
 }
 
 async function openMeteoElevation(points: LatLon[], ctx: SourceContext): Promise<{ values: number[]; fetchedAt: string }> {
-  const values: number[] = [];
+  const chunks: LatLon[][] = [];
+  for (let i = 0; i < points.length; i += 100) chunks.push(points.slice(i, i + 100));
   let fetchedAt = '';
-  for (let i = 0; i < points.length; i += 100) {
-    const chunk = points.slice(i, i + 100);
+  const parts = await mapPool(chunks, 5, async (chunk) => {
     const url = `https://api.open-meteo.com/v1/elevation?latitude=${chunk.map((p) => p.lat).join(',')}&longitude=${chunk
       .map((p) => p.lon)
       .join(',')}`;
@@ -391,10 +713,10 @@ async function openMeteoElevation(points: LatLon[], ctx: SourceContext): Promise
     if (!elev || elev.length !== chunk.length || elev.some((v) => typeof v !== 'number' || !Number.isFinite(v))) {
       throw new Error('Open-Meteo elevation: bad response');
     }
-    values.push(...elev);
     if (res.fetchedAt > fetchedAt) fetchedAt = res.fetchedAt;
-  }
-  return { values, fetchedAt };
+    return elev;
+  });
+  return { values: parts.flat(), fetchedAt };
 }
 
 async function usgsElevation(points: LatLon[], ctx: SourceContext): Promise<{ values: number[]; fetchedAt: string }> {
@@ -520,28 +842,40 @@ export interface AreaRequest {
   country: string;
 }
 
-/** Fetch everything for one address in parallel. Throws RoadsUnavailableError when no Overpass endpoint answers. */
-export async function buildArea(req: AreaRequest, ctx: SourceContext = {}): Promise<AreaData> {
+/** Marks a part working, then done or failed when the promise settles. */
+function track<T>(p: () => Promise<T>, progress: AreaProgress | undefined, parts: ('roads' | 'places' | 'terrain' | 'wind')[]): Promise<T> {
+  if (progress) for (const k of parts) progress[k] = 'working';
+  const run = p();
+  if (progress) {
+    run.then(
+      () => { for (const k of parts) progress[k] = 'done'; },
+      () => { for (const k of parts) progress[k] = 'failed'; },
+    );
+  }
+  return run;
+}
+
+/**
+ * Fetch everything for one address in parallel: one Overpass call for roads and places, plus terrain and wind.
+ * Throws RoadsUnavailableError when no Overpass endpoint answers in time. Updates `progress` as parts finish.
+ */
+export async function buildArea(req: AreaRequest, ctx: SourceContext = {}, progress?: AreaProgress): Promise<AreaData> {
   const { home } = req;
   const country = req.country.toLowerCase();
-  const [roads, places, elevation, wind] = await Promise.allSettled([
-    fetchRoads(home, ctx),
-    fetchPlaces(home, ctx),
-    fetchElevation(home, country, ctx),
-    fetchWind(home, country, ctx),
+  const [map, elevation, wind] = await Promise.allSettled([
+    track(() => fetchMap(home, ctx, progress), progress, ['roads', 'places']),
+    track(() => fetchElevation(home, country, ctx), progress, ['terrain']),
+    track(() => fetchWind(home, country, ctx), progress, ['wind']),
   ]);
-  if (roads.status === 'rejected') throw new RoadsUnavailableError(roads.reason);
-
-  const fetchedAt: Record<string, string> = { 'Roads: OpenStreetMap (Overpass)': roads.value.fetchedAt };
-  const fallbacksUsed: string[] = [];
-
-  let placeList: RawPlace[] = [];
-  if (places.status === 'fulfilled') {
-    placeList = places.value.places;
-    fetchedAt['Places: OpenStreetMap (Overpass)'] = places.value.fetchedAt;
-  } else {
-    fallbacksUsed.push('Places service: no named destinations, so exit points are used');
+  if (map.status === 'rejected') {
+    throw map.reason instanceof RoadsUnavailableError ? map.reason : new RoadsUnavailableError(map.reason);
   }
+
+  const fetchedAt: Record<string, string> = {
+    'Roads: OpenStreetMap (Overpass)': map.value.fetchedAt,
+    'Places: OpenStreetMap (Overpass)': map.value.fetchedAt,
+  };
+  const fallbacksUsed: string[] = [];
 
   // fetchElevation and fetchWind never reject, but stay safe.
   const elev: ElevationOutcome =
@@ -557,8 +891,8 @@ export async function buildArea(req: AreaRequest, ctx: SourceContext = {}): Prom
     home,
     addressLabel: req.label,
     country,
-    roads: roads.value.roads,
-    places: placeList,
+    roads: map.value.roads,
+    places: map.value.places,
     elevation: elev.elevation,
     wind: w.wind,
     fetchedAt,
