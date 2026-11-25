@@ -1,0 +1,48 @@
+/* Address, loading and "How this plan was made" screens. Tokens come from theme.css. */
+
+/* Example map placeholder: outlined, clearly not data. */
+.map.entry-placeholder {
+  aspect-ratio: 4 / 3;
+  display: grid;
+  place-items: center;
+  padding: var(--s5);
+  border: 1px dashed var(--line-strong);
+  background: transparent;
+  box-shadow: none !important;
+  text-align: center;
+  color: var(--ink-2);
+}
+
+/* Empty-input hint: icon and words, not color alone. */
+.entry-hint { display: flex; gap: var(--s2); align-items: center; color: var(--warn); }
+.entry-hint .icon { color: var(--warn); width: 18px; height: 18px; }
+
+/* Address matches to pick from. */
+.entry-choices > li { padding: var(--s2) 0; }
+.entry-choice {
+  width: 100%;
+  text-align: left;
+  font-weight: 600;
+  background: var(--fill-soft);
+  border-color: var(--line);
+}
+
+/* Loading steps: icon per state, current step on a fill. */
+.entry-steps > li { align-items: center; padding-inline: var(--s2); border-radius: var(--r); }
+.entry-steps > li.working { background: var(--fill); }
+.entry-steps > li.working .icon { color: var(--route); }
+.entry-steps > li.done .icon { color: var(--ink); }
+
+/* Focus targets for headings moved to by script. */
+h1[tabindex="-1"]:focus, h2[tabindex="-1"]:focus { outline: none; }
+h1[tabindex="-1"]:focus-visible, h2[tabindex="-1"]:focus-visible { outline: 3px solid var(--route); outline-offset: 2px; }
+
+/* Sources table scrolls sideways on narrow screens instead of overflowing the page. */
+.entry-tablewrap { overflow-x: auto; }
+@media (max-width: 900px) {
+  .sources td:nth-child(3), .sources th:nth-child(3) { white-space: normal; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landing button, .landing .btn { transition: none; }
+}

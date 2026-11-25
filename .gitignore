@@ -1,0 +1,22 @@
+# Dependencies and builds
+node_modules/
+dist/
+
+# Secrets
+.env
+.env.*
+
+# Local caches and working captures
+app/.cache/
+.impeccable/review/
+.impeccable/mocks/
+.impeccable/questions/
+.impeccable/config.local.json
+.DS_Store
+
+# Private planning notes (contest strategy, decisions log, tooling); kept local only
+PRODUCT.md
+design/DECISIONS.md
+design/screen-map.md
+.impeccable/
+reference/

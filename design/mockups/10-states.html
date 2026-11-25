@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>States · Safe Passage mockup</title>
+<link rel="stylesheet" href="fonts.css">
+<link rel="stylesheet" href="base.css">
+<link rel="stylesheet" href="theme.css">
+</head>
+<body data-step="">
+<div class="page">
+<main class="narrow">
+  <h1>Loading and problem states</h1>
+  <section class="box stack" aria-live="polite">
+    <h2>Building your drill</h2>
+    <ul class="list">
+      <li><span data-icon="check"></span><div class="grow">Found your address</div><div class="val">done</div></li>
+      <li><span data-icon="check"></span><div class="grow">Loaded nearby roads</div><div class="val">done</div></li>
+      <li><span data-icon="clock"></span><div class="grow"><b>Reading terrain and wind</b></div><div class="val">working</div></li>
+      <li><div class="grow muted">Finding ways out</div><div class="val muted">waiting</div></li>
+    </ul>
+    <div><button type="button">Cancel</button></div>
+  </section>
+  <section class="box stack">
+    <h2 class="verdict"><span data-icon="warn"></span>We couldn't find that address</h2>
+    <p>Check the spelling, or add the city and state.</p>
+    <div class="row"><input type="text" value="12 Wilow Drive" aria-label="Home address" style="flex:1 1 240px"><button class="primary" type="button">Search again</button></div>
+    <div class="row"><a class="btn" href="03-home-map.html">Try demo address</a><button type="button">Place my home on the map</button></div>
+  </section>
+  <section class="box stack">
+    <h2 class="verdict"><span data-icon="warn"></span>Outside the US: no official fire perimeters here</h2>
+    <p>You can still run a drill. Satellite heat detections may be shown for reference. Road and destination data may be incomplete. Follow your local emergency service.</p>
+    <div class="row"><a class="btn primary" href="03-home-map.html">Continue to drill</a><a href="01-landing.html">Use another address</a></div>
+  </section>
+  <section class="box stack">
+    <h2 class="verdict"><span data-icon="warn"></span>A data service didn't answer</h2>
+    <p>The rest of your drill still works. Here is what changed:</p>
+    <table>
+      <thead><tr><th>Missing</th><th>What we do instead</th></tr></thead>
+      <tbody>
+        <tr><td>Wind service</td><td>You set wind by hand.</td></tr>
+        <tr><td>Elevation service</td><td>Fire spreads as if the ground is flat. Shown on every result.</td></tr>
+        <tr><td>Route service</td><td>Second route service. If both fail, no times are shown.</td></tr>
+        <tr><td>AI writer</td><td>A fixed checklist, not tagged as AI-written.</td></tr>
+        <tr><td>Road data</td><td>No drill. Retry, or open the saved demo.</td></tr>
+      </tbody>
+    </table>
+    <div class="row"><button class="primary" type="button">Retry</button><button type="button">Continue without it</button></div>
+  </section>
+  <section class="box stack">
+    <h2 class="verdict"><span data-icon="check"></span>This fire did not close your way out</h2>
+    <p>In 3 hours of simulated time, the fire never reached Creek Rd or Ridge Rd. That is one fire, not a promise. Try a point closer to your roads or a stronger wind.</p>
+    <div class="row"><a class="btn primary" href="04-drill-setup.html">Try another fire</a><a href="08-personal-plan.html">Make my plan anyway</a></div>
+  </section>
+  <section class="box stack">
+    <h2 class="verdict"><span data-icon="warn"></span>No way out found on mapped roads</h2>
+    <p>OpenStreetMap has no road from your home to a destination outside the drill area. The map may be missing roads near you.</p>
+    <div class="row"><button class="primary" type="button">Place my home on the nearest road</button><a href="01-landing.html">Use another address</a></div>
+  </section>
+</main>
+</div>
+<script src="shell.js"></script>
+</body>
+</html>

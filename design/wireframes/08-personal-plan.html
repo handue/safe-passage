@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Personal plan · Safe Passage wireframe</title>
+<link rel="stylesheet" href="wire.css">
+</head>
+<body data-step="plan">
+<div class="page">
+<main class="narrow">
+  <div class="row between">
+    <h1>Our leaving plan</h1>
+    <button class="primary noprint" type="button" onclick="print()">Print or save as PDF</button>
+  </div>
+  <p>13390 West Park Ave, Boulder Creek, CA · 2 adults, 1 child, 1 needs help moving, 1 dog, 1 cat · Made Nov 24, 2026</p>
+  <section class="stack-s box">
+    <h2>When told to leave <span class="tag ai">AI-WRITTEN</span></h2>
+    <p style="font-size:var(--t-m)">Leave as soon as officials tell you to. One adult helps the person who needs support while the other gets the pets. Take Willow Dr to Creek Rd. If Creek Rd is closed, take Ridge Rd.</p>
+  </section>
+  <section class="cols2">
+    <div class="stack-s">
+      <h2>Routes <span class="tag calc">CALCULATED</span></h2>
+      <p><b>Main:</b> Willow Dr → Creek Rd → Highway south. 14 min to D1 School.</p>
+      <p><b>Backup:</b> Willow Dr → Ridge Rd north. 20 min to D2 Hall.</p>
+      <p class="small muted">Destinations are not confirmed shelters. Follow official directions.</p>
+    </div>
+    <div class="stack-s">
+      <h2>Meet here if separated</h2>
+      <label for="meet">Meeting spot you choose</label>
+      <input id="meet" type="text" placeholder="Example: school front entrance">
+      <label for="contact">Out-of-area contact</label>
+      <input id="contact" type="text" placeholder="Name and phone">
+      <p class="small muted">Kept in this browser only. Not sent to the AI writer.</p>
+    </div>
+  </section>
+  <section class="cols2">
+    <div class="stack-s">
+      <h2>Go-bag <span class="tag ai">AI-WRITTEN</span></h2>
+      <label class="row"><input type="checkbox"> Medications and a list of doses</label>
+      <label class="row"><input type="checkbox"> Mobility aids and chargers</label>
+      <label class="row"><input type="checkbox"> Pet carriers, leash, food</label>
+      <label class="row"><input type="checkbox"> ID and insurance papers</label>
+      <label class="row"><input type="checkbox"> Water for 3 days</label>
+      <label class="row"><input type="checkbox"> Child's comfort item</label>
+    </div>
+    <div class="stack-s">
+      <h2>Do this this week <span class="tag ai">AI-WRITTEN</span></h2>
+      <label class="row"><input type="checkbox"> Move pet carriers next to the front door</label>
+      <label class="row"><input type="checkbox"> Put medications in the go-bag</label>
+      <label class="row"><input type="checkbox"> Drive the backup route once</label>
+      <p class="muted">In the last drill: 25 min needed, 5 min to spare. <span class="tag calc">CALCULATED</span></p>
+    </div>
+  </section>
+  <div class="row noprint"><a href="07-fix-plan.html">Back to compare</a><a href="09-how-made.html">How this plan was made</a></div>
+</main>
+</div>
+<script src="wire.js"></script>
+</body>
+</html>

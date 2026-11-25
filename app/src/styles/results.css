@@ -1,0 +1,43 @@
+/* Results and Fix screens, plus time bars. Tokens come from theme.css. */
+
+/* Time bars */
+.cut.flip b { right: auto; left: var(--s2); }
+.tb-row { position: relative; padding-top: var(--s5); }
+.timewrap:has(.tb-row) { padding-top: 0; }
+.tb-row .cut { top: 0; }
+
+/* Headline area */
+.res-head .big { text-wrap: balance; }
+h1 .sample { font-family: "Barlow", system-ui, sans-serif; }
+.conds { display: flex; flex-wrap: wrap; gap: var(--s2); }
+.notes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--s1); }
+.notes li { display: flex; gap: var(--s2); align-items: flex-start; font-size: 14px; color: var(--ink-2); }
+.notes .icon { width: 18px; height: 18px; color: var(--warn); margin-top: 1px; }
+.backup-line { font-size: 15px; color: var(--ink-2); }
+.backup-line b { color: var(--ink); }
+
+/* Side list icons: icons lead every danger row, words carry the meaning */
+.side .list .icon { margin-top: 2px; }
+.list .closes { font-weight: 700; }
+
+/* State boxes (no drill, no way out, fire outside the area) */
+.state-box { max-width: 720px; }
+.state-box .verdict .icon { color: var(--warn); }
+.state-box .verdict.ok .icon { color: var(--spare); }
+
+/* Fix screen */
+.fix-cols { align-items: start; }
+.fix-head { gap: var(--s3); }
+.compare > .after-empty { border: 1px dashed var(--line-strong); background: var(--panel); justify-content: center; }
+.after-empty p { color: var(--ink-2); }
+.compare .verdict .icon { width: 26px; height: 26px; color: inherit; }
+.compare .hero small { font-family: "Barlow Semi Condensed", "Barlow", system-ui, sans-serif; }
+.compare .neutral .hero, .compare .neutral .verdict { color: var(--ink); }
+.fix-list > li > input[type=checkbox] { margin-top: 2px; }
+.fix-list label { cursor: pointer; }
+.fix-list .est-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); margin-top: var(--s1); font-size: 14px; color: var(--ink-2); }
+.fix-list input[type=number] { width: 72px; min-height: 36px; padding: var(--s1) var(--s2); font-weight: 700; }
+.fix-list input[type=number]:disabled { opacity: .6; }
+.fix-list .val { min-width: 72px; }
+
+@media (max-width: 900px) { .timewrap .cut b { font-size: 13px; } }

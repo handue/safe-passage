@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fix the plan · Safe Passage wireframe</title>
+<link rel="stylesheet" href="wire.css">
+</head>
+<body data-step="fix" data-drill>
+<div class="page">
+<main class="stage" style="padding:var(--s4) var(--s5);gap:var(--s4)">
+  <div class="row between">
+    <h1>Same fire, new plan</h1>
+    <span class="chip">Both runs: ignition 1 · wind NW 22 mph · day · same random seed</span>
+  </div>
+  <div class="compare">
+    <div class="before">
+      <h2>Before</h2>
+      <div class="hero">33<small>min</small></div>
+      <p class="verdict"><span data-icon="closed"></span>3 min short</p>
+    </div>
+    <div class="after">
+      <h2>After</h2>
+      <div class="hero">25<small>min</small></div>
+      <p class="verdict"><span data-icon="check"></span>5 min to spare</p>
+    </div>
+  </div>
+  <div class="stack-s">
+    <div class="timewrap compare-bars" role="img" aria-label="Before: 33 minutes, past the road closure at 30. After: 25 minutes, ahead of it.">
+      <div class="bar">
+        <span class="prep" style="left:0;width:20%">Family 9</span>
+        <span class="slow" style="left:20%;width:24.45%">Pets 7 + meds 4</span>
+        <span class="prep" style="left:44.45%;width:15.56%">Other 7</span>
+        <span class="drive" style="left:60.01%;width:13.33%">Drive 6</span>
+      </div>
+      <div class="bar" style="margin-top:var(--s2)">
+        <span class="prep" style="left:0;width:20%">Family 9</span>
+        <span class="fixed" style="left:20%;width:6.67%">3</span>
+        <span class="prep" style="left:26.67%;width:15.56%">Other 7</span>
+        <span class="drive" style="left:42.23%;width:13.33%">Drive 6</span>
+      </div>
+      <div class="cut" style="left:66.67%"><b>Creek Rd closes T+30</b></div>
+    </div>
+    <p class="small muted">Top bar: before. Bottom bar: after. Hatched: slow tasks. Outlined: fixed. Solid: drive. Time needed to get past the closure point <span class="tag calc">CALCULATED</span></p>
+  </div>
+  <div class="cols2">
+    <div class="stack-s">
+      <h2>Changes</h2>
+      <ul class="list">
+        <li><input type="checkbox" id="f1" checked><label class="grow" for="f1">Keep pet carriers by the front door<div class="muted small">7 → 2 min <span class="tag est">YOUR ESTIMATE</span></div></label><div class="val">−5 min</div></li>
+        <li><input type="checkbox" id="f2" checked><label class="grow" for="f2">Put medications in the go-bag<div class="muted small">4 → 1 min <span class="tag est">YOUR ESTIMATE</span></div></label><div class="val">−3 min</div></li>
+        <li><input type="checkbox" id="f3"><label class="grow" for="f3">Use Ridge Rd as the backup route<div class="muted small">Open until T+70 in this fire. Drive 20 min instead of 14. <span class="tag calc">CALCULATED</span></div></label><div class="val">+6 min drive</div></li>
+      </ul>
+      <div class="row">
+        <button type="button">Run the same fire again</button>
+        <a class="btn primary" href="08-personal-plan.html">Make my plan</a>
+      </div>
+      <p class="small muted">Minutes you change are your own estimates. Practice once to check them.</p>
+    </div>
+    <div class="map short" data-map="fix"></div>
+  </div>
+</main>
+</div>
+<script src="wire.js"></script>
+</body>
+</html>

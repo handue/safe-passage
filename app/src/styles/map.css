@@ -1,0 +1,78 @@
+/* Drill map (MapView). Colors and class names come from theme.css; this file only fits
+   them to a real-geography SVG whose viewBox is 1000 units across.
+   Strokes are set in screen pixels (non-scaling), and label sizes come from MapView,
+   which measures the rendered width so text stays about 14px on screen. */
+
+.map.sp-map { position: relative; }
+.map.sp-map svg { touch-action: manipulation; }
+.map.sp-map.picking svg { cursor: crosshair; }
+
+.map.sp-map svg :is(path, circle, rect, line) { vector-effect: non-scaling-stroke; }
+.map.sp-map svg text {
+  font-size: var(--map-fs, 15px) !important;
+  stroke-width: var(--map-ts, 5px) !important;
+  stroke-linejoin: round;
+}
+.map.sp-map svg text.t-dest,
+.map.sp-map svg text.t-ig {
+  stroke-width: 0 !important;
+}
+.map.sp-map svg text.t-dest { font-size: var(--map-fs-dest, 13px) !important; }
+.map.sp-map svg .t-ig { fill: var(--ink); }
+.map.sp-map svg .t-ig.on { fill: #2a1000; }
+
+.sp-map .sp-ground { fill: transparent; }
+
+/* Terrain */
+.sp-map .contour { stroke-width: 1px; stroke-opacity: .16; }
+.sp-map .contour.major { stroke-opacity: .34; stroke-width: 1.2px; }
+
+/* Ordinary roads, by OSM class */
+.sp-map .road.minor { stroke-width: 1.4px; stroke-opacity: .8; }
+.sp-map .road.mid { stroke-width: 2.6px; }
+.sp-map .hwy { stroke-width: 4.2px; }
+
+/* Fire model edge: outside the square the fire is not simulated */
+.sp-map .sp-outside { fill: rgba(4, 9, 14, .45); stroke: none; }
+.sp-map .sp-gridedge { fill: none; stroke: #8ea3bd; stroke-opacity: .55; stroke-width: 1.2px; stroke-dasharray: 3 7; }
+
+/* Fire cells */
+.sp-map .c-hatch { fill: none; stroke-width: 1px; }
+
+/* Routes */
+.sp-map .r-halo { stroke-width: 15px; }
+.sp-map .r-main { stroke-width: 5px; }
+.sp-map .r-backup { stroke-width: 4.5px; stroke-dasharray: 11 9; }
+.sp-map .r-closed { stroke-width: 5.5px; stroke-dasharray: 1.5 10; }
+.sp-map .r-unused { stroke-width: 3px; stroke-dasharray: 6 9; }
+
+/* Markers */
+.sp-map .closure { stroke-width: 3px; stroke-dasharray: 5 4; }
+.sp-map .closure-back { stroke-width: 8px; }
+.sp-map .leader { stroke-width: 1.5px; }
+.sp-map .home-ring { stroke-width: 2px; }
+.sp-map .dest { stroke-width: 2px; }
+.sp-map .wind path { stroke-width: 3.5px; }
+.sp-map .ig { stroke-width: 2.5px; }
+.sp-map .ig-ring { stroke-width: 1.5px; stroke-dasharray: 4 5; }
+.sp-map .sp-status { font-weight: 700; }
+
+/* Ignition buttons: keyboard focus gets its own visible ring */
+.sp-map .ig-btn { cursor: pointer; outline: none; }
+.sp-map .ig-hit { fill: transparent; stroke: none; }
+.sp-map .ig-focus { display: none; fill: none; stroke: var(--ink); stroke-width: 2.5px; }
+.sp-map .ig-btn:focus-visible .ig-focus { display: inline; }
+.sp-map .ig-btn:hover .ig:not(.on) { fill: #2a1708; }
+
+.sp-attrib {
+  position: absolute;
+  right: 8px;
+  bottom: 6px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: rgba(8, 16, 23, .72);
+  color: var(--ink-2);
+  font-size: 11px;
+  line-height: 1.5;
+  pointer-events: none;
+}

@@ -1,0 +1,31 @@
+/* Fix screen: compact layout so the whole comparison fits one desktop screen. */
+main.stage.fix-stage { padding: var(--s3) var(--s5); gap: var(--s2); }
+.fix-actions { align-items: center; }
+.fix-actions p { flex: 1 1 220px; margin: 0; }
+.more-fixes summary { cursor: pointer; padding: var(--s2) 0; font-weight: 700; color: var(--ink-2); }
+.more-fixes summary:hover { color: var(--ink); }
+.more-fixes summary:focus-visible { outline: 2px solid var(--route); outline-offset: 2px; border-radius: 4px; }
+@media (min-width: 901px) {
+  .list.fix-list > li { padding: var(--s2) 0; align-items: center; }
+  .list.fix-list > li > .grow { display: flex; flex-wrap: wrap; align-items: center; column-gap: var(--s3); row-gap: var(--s1); }
+  .fix-list > li > .grow > label { flex: 1 1 200px; }
+  .fix-list .est-row { margin-top: 0; }
+  .fix-list > li > .grow > .muted { flex-basis: 100%; }
+  .fix-list input[type=number] { min-height: 32px; padding-block: 2px; }
+  .fix-stage .compare .hero { font-size: 72px; }
+  .fix-stage .compare > div { padding-block: var(--s2); }
+}
+@media (min-width: 901px) {
+  /* Bar names sit to the left of each bar instead of above it. */
+  .fix-stage .compare-bars { margin-left: 64px; }
+  .fix-stage .compare-bars .barname { float: left; clear: left; width: 56px; margin-left: -64px; line-height: 40px; }
+  .fix-stage .compare-bars .bar { margin-bottom: var(--s2); }
+}
+.tb-note { flex: 1; text-align: center; }
+.more-fixes summary { padding: var(--s1) 0; }
+@media (max-width: 900px) {
+  .tb-note { order: 3; flex-basis: 100%; text-align: left; }
+}
+
+/* What each hero number measures, so Before and After compare like with like. */
+.fix-stage .compare .fix-measure { margin: 0; color: var(--ink-2); }

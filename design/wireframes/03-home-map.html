@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Home map · Safe Passage wireframe</title>
+<link rel="stylesheet" href="wire.css">
+</head>
+<body data-step="map">
+<div class="page">
+<main class="split">
+  <section class="stage">
+    <div class="row between">
+      <h1>Your home and ways out</h1>
+      <div class="row">
+        <label class="row"><input type="checkbox" checked> Wind</label>
+        <label class="row"><input type="checkbox" checked> Terrain</label>
+        <label class="row"><input type="checkbox"> Recent satellite heat (reference only)</label>
+      </div>
+    </div>
+    <div data-map="overview"></div>
+    <p class="small muted">Map data © OpenStreetMap contributors. The satellite layer shows past detections and is never part of a drill.</p>
+  </section>
+  <aside class="side">
+    <p>13390 West Park Ave, Boulder Creek, CA <span class="chip">Demo address</span></p>
+    <div class="box row"><span data-icon="oneway"></span><div style="flex:1"><b>Only one way out for the first 0.6 mi</b><div class="muted">Willow Dr, until it splits. <span class="tag calc">CALCULATED</span></div></div></div>
+    <div>
+      <h2 style="font-size:var(--t-m)">Ways out</h2>
+      <ul class="list">
+        <li><div class="grow"><b>A. Creek Rd to Highway</b><div class="muted">to D1 School · 5.8 mi</div></div><div class="val">14 min drive</div></li>
+        <li><div class="grow"><b>B. Ridge Rd north</b><div class="muted">to D2 Hall · 7.4 mi</div></div><div class="val">20 min drive</div></li>
+      </ul>
+    </div>
+    <div class="stack-s">
+      <h2 style="font-size:var(--t-m)">Candidate destinations</h2>
+      <p>D1 School, D2 Community hall. <b>Not confirmed as open shelters.</b> Check with your county.</p>
+    </div>
+    <div class="stack-s">
+      <h2 style="font-size:var(--t-m)">Today's conditions</h2>
+      <p>Wind from NW, 22 mph. Slope rises 12% toward the northwest.</p>
+    </div>
+    <div class="row">
+      <a class="btn primary" href="04-drill-setup.html">Set up a drill</a>
+      <a href="02-household.html">Edit household (27 min)</a>
+    </div>
+  </aside>
+</main>
+</div>
+<script src="wire.js"></script>
+</body>
+</html>

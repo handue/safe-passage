@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Address · Safe Passage wireframe</title>
+<link rel="stylesheet" href="wire.css">
+</head>
+<body data-step="address">
+<div class="page">
+<main class="narrow">
+  <div class="stack">
+    <h1 style="font-size:var(--t-2xl)">Practice leaving home before you have to.</h1>
+    <p style="font-size:var(--t-m)">Enter your address. Run a simulated wildfire. Find what slows your household down, fix it, and run the same fire again.</p>
+  </div>
+  <form class="stack" action="02-household.html">
+    <label for="addr">Home address</label>
+    <div class="row">
+      <input id="addr" type="text" placeholder="Street, city, state" autocomplete="street-address" style="flex:1 1 300px">
+      <button class="primary">Build my drill</button>
+    </div>
+    <div class="row">
+      <a class="btn" href="03-home-map.html">Try demo address</a>
+      <span class="muted">Boulder Creek Library, CA, with a sample household. Nothing to type.</span>
+    </div>
+    <p class="small muted">Your address is sent to map, route, terrain and weather services to build the drill. The AI writer gets road names and times, not your house number.</p>
+  </form>
+  <ol class="cols3" style="list-style:none;padding:0;margin:0">
+    <li class="stack-s"><h2 style="font-size:var(--t-m)">1. Rehearse</h2><p class="muted">A practice fire spreads with wind and slope near your home.</p></li>
+    <li class="stack-s"><h2 style="font-size:var(--t-m)">2. Find weak spots</h2><p class="muted">One way out, a road the fire closes, or the task that takes longest.</p></li>
+    <li class="stack-s"><h2 style="font-size:var(--t-m)">3. Fix and compare</h2><p class="muted">Change the plan and see before and after on the same fire.</p></li>
+  </ol>
+  <p class="box"><b>This is not a fire alert app.</b> It does not track live fires or tell you when to leave.</p>
+</main>
+</div>
+<script src="wire.js"></script>
+</body>
+</html>

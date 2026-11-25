@@ -1,0 +1,2 @@
+/* App-only styles that the design mockups did not need. Visual tokens live in theme.css. */
+.steps .locked { display: block; padding: var(--s1) var(--s3); color: var(--ink-2); opacity: .55; cursor: not-allowed; }

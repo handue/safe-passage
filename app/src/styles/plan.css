@@ -1,0 +1,33 @@
+/* Personal plan (screen 8). Shared look comes from base.css and theme.css. */
+.plan .plan-lead { font-size: var(--t-m); }
+.plan-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--s2); }
+.plan-list label { font-weight: 500; gap: var(--s3); }
+.plan-list input[type=checkbox] { margin-top: 1px; }
+
+.plan-result { display: flex; gap: var(--s2); align-items: flex-start; max-width: 70ch; }
+.plan-result .icon { flex: none; width: 22px; height: 22px; margin-top: 1px; color: var(--ink-2); }
+.plan-result.is-short .icon { color: var(--short); }
+.plan-result.is-spare .icon { color: var(--spare); }
+
+.plan-wait { display: flex; gap: var(--s2); align-items: center; flex-wrap: wrap; color: var(--ink-2); }
+.plan-wait .icon { flex: none; width: 20px; height: 20px; }
+.plan-wait button { margin-left: auto; }
+
+.plan-field { gap: var(--s1); }
+.plan-field input { width: 100%; }
+.printval { display: none; }
+
+.plan-fallbacks { margin: 0; padding-left: var(--s5); display: flex; flex-direction: column; gap: var(--s1); }
+
+@media print {
+  .plan { gap: var(--s4); }
+  .plan-field input { display: none; }
+  .printval { display: block; min-height: 1.45em; padding-bottom: 2px; border-bottom: 1px solid #888; color: #111; }
+  .plan-wait { color: #333; }
+  .plan-result .icon, .plan-result.is-short .icon, .plan-result.is-spare .icon { color: #111; }
+  .plan section { break-inside: avoid; }
+  .plan a { color: #111; }
+}
+.plan-field textarea { font: inherit; padding: var(--s3); border: 1px solid var(--line-strong); border-radius: var(--r); background: #0c141f; color: var(--ink); resize: vertical; min-height: 44px; width: 100%; }
+.plan-field textarea::placeholder { color: #8d9db3; }
+@media print { .plan-field textarea { display: none; } }

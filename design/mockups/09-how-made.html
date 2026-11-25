@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How this plan was made · Safe Passage mockup</title>
+<link rel="stylesheet" href="fonts.css">
+<link rel="stylesheet" href="base.css">
+<link rel="stylesheet" href="theme.css">
+</head>
+<body data-step="">
+<div class="page">
+<main class="narrow">
+  <div class="stack">
+    <h1>How this plan was made</h1>
+    <p>Three kinds of information appear in Safe Passage:</p>
+    <p><span class="tag calc">CALCULATED</span> worked out by code from data.</p>
+    <p><span class="tag est">YOUR ESTIMATE</span> a number you gave or accepted.</p>
+    <p><span class="tag ai">AI-WRITTEN</span> wording by a language model. It does not set times or routes.</p>
+  </div>
+  <section class="stack-s">
+    <h2>Data sources</h2>
+    <table class="sources">
+      <thead><tr><th>What</th><th>Source</th><th>Fetched (sample)</th></tr></thead>
+      <tbody>
+        <tr><td>Address to location</td><td>Nominatim (fallback: US Census geocoder)</td><td>Nov 24, 2:03 PM</td></tr>
+        <tr><td>Roads, candidate destinations</td><td>OpenStreetMap via Overpass (fallback: a second Overpass server)</td><td>Nov 24, 2:03 PM</td></tr>
+        <tr><td>Routes around the practice fire</td><td>openrouteservice (fallback: Valhalla)</td><td>Nov 24, 2:04 PM</td></tr>
+        <tr><td>Wind and weather</td><td>Open-Meteo (fallback: NWS)</td><td>Nov 24, 2:03 PM</td></tr>
+        <tr><td>Slope</td><td>Open-Meteo Elevation (fallback: USGS elevation service, US only)</td><td>Nov 24, 2:03 PM</td></tr>
+        <tr><td>Recent heat detections (reference)</td><td>NASA FIRMS; NIFC perimeters in the US (no fallback: the layer is hidden)</td><td>Nov 24, 2:03 PM</td></tr>
+        <tr><td>Plan wording</td><td>Meta Model API, muse-spark-1.3 (fallback: a fixed checklist, not tagged AI-written). Receives road names, times and household counts. No house number, names or phone numbers.</td><td>Nov 24, 2:05 PM</td></tr>
+      </tbody>
+    </table>
+    <p class="small muted">Service names show the planned setup and may change during the build.</p>
+  </section>
+  <section class="stack-s">
+    <h2>How the numbers are worked out</h2>
+    <p><b>Fire:</b> our own grid model. Each step, fire can move to nearby cells; wind and uphill slope make that more likely. The same seed gives the same fire.</p>
+    <p><b>Time needed:</b> your task minutes, one after another, plus drive time to the last point the fire can cut your route.</p>
+    <p><b>Time to spare:</b> the minute that point closes, minus time needed.</p>
+  </section>
+  <section class="stack-s">
+    <h2>Assumptions</h2>
+    <ul>
+      <li>The order to leave reaches you the moment the fire starts. Real orders can come later.</li>
+      <li>Household tasks happen one after another.</li>
+      <li>Wind speed and direction stay the same for the whole drill.</li>
+      <li>Cars drive at the route service's normal speeds, with no traffic.</li>
+      <li>A night drill adds a wake-up task. The fire spreads the same way.</li>
+    </ul>
+  </section>
+  <section class="stack-s">
+    <h2>What this model leaves out</h2>
+    <ul>
+      <li>Vegetation, fuel moisture, humidity, embers jumping ahead, and firefighting.</li>
+      <li>Traffic, crashes, smoke on the road, and downed power lines.</li>
+      <li>Wind changes during a drill.</li>
+      <li>Whether a destination is open or has room.</li>
+      <li>Delays between a fire starting and an order reaching you.</li>
+    </ul>
+    <p>Real fires can move much faster than this model.</p>
+  </section>
+</main>
+</div>
+<script src="shell.js"></script>
+</body>
+</html>

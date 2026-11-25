@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Drill running · Safe Passage wireframe</title>
+<link rel="stylesheet" href="wire.css">
+</head>
+<body data-step="drill" data-drill>
+<div class="page">
+<main class="split wide-side numbers-first">
+  <section class="stage">
+    <div class="row between">
+      <h1>Practice fire, T+18 min</h1>
+      <span class="chip">Ignition 1 · Wind NW 22 mph · Day</span>
+    </div>
+    <div data-map="running"></div>
+    <div class="legend">
+      <span><i style="background:repeating-linear-gradient(45deg,#4a4a4a 0 3px,#d0d0d0 3px 7px)"></i>Simulated fire (hatched)</span>
+      <span><i style="background:#161616;height:5px;vertical-align:2px"></i>Your route (solid)</span>
+    </div>
+    <div class="row">
+      <button type="button">Pause</button>
+      <button type="button">Speed 1×</button>
+      <button type="button">Step 1 min</button>
+      <input type="range" min="0" max="45" value="18" aria-label="Drill time in minutes" style="flex:1 1 200px;width:auto">
+    </div>
+    <p class="small muted">Motion: the hatched area grows one model step at a time. With reduced motion, use Step.</p>
+  </section>
+  <aside class="side">
+    <div class="stack-s">
+      <h2>Creek Rd closes in</h2>
+      <div class="hero">12<small>min</small></div>
+    </div>
+    <div class="stack-s">
+      <h2>You need to get past it</h2>
+      <div class="hero">15<small>min</small></div>
+    </div>
+    <p class="verdict"><span data-icon="warn"></span>3 min short on this plan</p>
+    <p class="small muted">Both times <span class="tag calc">CALCULATED</span> from the fire model, the route and your task minutes.</p>
+    <div>
+      <h3>Your household now</h3>
+      <ul class="list">
+        <li><span data-icon="check"></span><div class="grow">Gather everyone</div><div class="val">done</div></li>
+        <li><span data-icon="check"></span><div class="grow">Help a person to the car</div><div class="val">done</div></li>
+        <li><span data-icon="check"></span><div class="grow">Find pet carriers and pets</div><div class="val">done</div></li>
+        <li style="background:var(--fill);padding-inline:var(--s3)"><span data-icon="clock"></span><div class="grow"><b>Gather medications (now)</b></div><div class="val">2 min left</div></li>
+        <li><div class="grow">Documents, then load the car</div><div class="val">7 min</div></li>
+      </ul>
+    </div>
+    <a class="btn primary" href="06-drill-results.html">Skip to results</a>
+  </aside>
+</main>
+</div>
+<script src="wire.js"></script>
+</body>
+</html>

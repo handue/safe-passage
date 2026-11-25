@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Household · Safe Passage mockup</title>
+<link rel="stylesheet" href="fonts.css">
+<link rel="stylesheet" href="base.css">
+<link rel="stylesheet" href="theme.css">
+</head>
+<body data-step="household">
+<div class="page">
+<main class="split">
+  <form class="stage" id="hh" action="03-home-map.html" style="padding:var(--s6) var(--s5);gap:var(--s6)">
+    <h1>Who is leaving with you?</h1>
+    <div class="cols3">
+      <div class="stack-s"><label for="a">Adults</label><input id="a" type="number" min="0" value="2"></div>
+      <div class="stack-s"><label for="c">Children</label><input id="c" type="number" min="0" value="1"></div>
+      <div class="stack-s"><label for="m">Need help moving</label><input id="m" type="number" min="0" value="1"></div>
+      <div class="stack-s"><label for="d">Dogs</label><input id="d" type="number" min="0" value="1"></div>
+      <div class="stack-s"><label for="ct">Cats and small pets</label><input id="ct" type="number" min="0" value="1"></div>
+      <div class="stack-s"><label for="v">Cars you can use</label><input id="v" type="number" min="0" value="1"><span class="small muted">0 adds a "reach a ride" task.</span></div>
+    </div>
+    <div class="stack-s">
+      <h2>Getting ready to leave</h2>
+      <p class="muted">Starting guesses based on your household. Change any of them to match your home. Tasks are counted one after another.</p>
+      <table>
+        <thead><tr><th>Task</th><th style="width:130px">Minutes</th><th style="width:130px">Source</th></tr></thead>
+        <tbody>
+          <tr><td>Gather everyone</td><td><input type="number" value="3" aria-label="Minutes: gather everyone"></td><td><span class="tag est">YOUR ESTIMATE</span></td></tr>
+          <tr><td>Help a person to the car</td><td><input type="number" value="6" aria-label="Minutes: help a person to the car"></td><td><span class="tag est">YOUR ESTIMATE</span></td></tr>
+          <tr><td>Find pet carriers and pets</td><td><input type="number" value="7" aria-label="Minutes: pets"></td><td><span class="tag est">YOUR ESTIMATE</span></td></tr>
+          <tr><td>Gather medications</td><td><input type="number" value="4" aria-label="Minutes: medications"></td><td><span class="tag est">YOUR ESTIMATE</span></td></tr>
+          <tr><td>Documents, phones, chargers</td><td><input type="number" value="3" aria-label="Minutes: documents"></td><td><span class="tag est">YOUR ESTIMATE</span></td></tr>
+          <tr><td>Load the car</td><td><input type="number" value="4" aria-label="Minutes: load the car"></td><td><span class="tag est">YOUR ESTIMATE</span></td></tr>
+        </tbody>
+      </table>
+      <div><button type="button">Add a task</button></div>
+    </div>
+  </form>
+  <aside class="side">
+    <div class="stack-s">
+      <h2>Time to get out the door</h2>
+      <div class="hero">27<small>min</small></div>
+      <p class="muted">Sum of your tasks. <span class="tag calc">CALCULATED</span></p>
+    </div>
+    <p>Not sure? Time yourself once at home and come back with real minutes.</p>
+    <button class="primary" form="hh">Show my home map</button>
+    <a href="01-landing.html">Back to address</a>
+  </aside>
+</main>
+</div>
+<script src="shell.js"></script>
+</body>
+</html>

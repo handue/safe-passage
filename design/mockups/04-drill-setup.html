@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Drill setup · Safe Passage mockup</title>
+<link rel="stylesheet" href="fonts.css">
+<link rel="stylesheet" href="base.css">
+<link rel="stylesheet" href="theme.css">
+</head>
+<body data-step="drill" data-drill>
+<div class="page">
+<main class="split">
+  <section class="stage">
+    <h1>Where does the practice fire start?</h1>
+    <p>Tap the map, or choose one of three suggested points.</p>
+    <div data-map="setup"></div>
+  </section>
+  <form class="side" action="05-drill-running.html">
+    <fieldset>
+      <legend>Ignition point</legend>
+      <div class="seg">
+        <label><input type="radio" name="ig" checked> 1. Northwest slope</label>
+        <label><input type="radio" name="ig"> 2. North ridge</label>
+        <label><input type="radio" name="ig"> 3. Southeast gully</label>
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>Wind blows from</legend>
+      <div class="seg">
+        <label><input type="radio" name="w"> N</label><label><input type="radio" name="w"> NE</label><label><input type="radio" name="w"> E</label><label><input type="radio" name="w"> SE</label>
+        <label><input type="radio" name="w"> S</label><label><input type="radio" name="w"> SW</label><label><input type="radio" name="w"> W</label><label><input type="radio" name="w" checked> NW</label>
+      </div>
+    </fieldset>
+    <div class="stack-s">
+      <label for="ws">Wind speed: <output id="wso">22</output> mph</label>
+      <input id="ws" type="range" min="0" max="60" value="22" oninput="wso.value=this.value">
+      <button type="button">Use today's wind</button>
+      <span class="small muted">Open-Meteo. <span class="tag calc">CALCULATED</span></span>
+    </div>
+    <fieldset>
+      <legend>Start time</legend>
+      <div class="seg">
+        <label><input type="radio" name="t" checked> Day, 2:00 PM</label>
+        <label><input type="radio" name="t"> Night, 2:00 AM</label>
+      </div>
+      <p class="small muted" style="margin-top:var(--s2)">Night adds a "wake up" task to your minutes. It does not change how the fire spreads.</p>
+    </fieldset>
+    <p>In this drill, the order to leave reaches you the moment the fire starts. Real orders can come later.</p>
+    <button class="primary">Start drill</button>
+  </form>
+</main>
+</div>
+<script src="shell.js"></script>
+</body>
+</html>
