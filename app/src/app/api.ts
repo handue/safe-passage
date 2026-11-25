@@ -66,3 +66,65 @@ export function fetchArea(place: { lat: number; lon: number; label: string; coun
 export function requestPlan(body: PlanRequest, signal?: AbortSignal): Promise<PlanResponse> {
   return getJson<PlanResponse>('/api/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal });
 }
+
+// ---------- Reference layer (real fires near home; never part of the drill) ----------
+
+export interface RefPerimeter {
+  name: string;
+  acres: number | null;
+  updatedAt: string | null;
+  /** Meters from home to the nearest edge; 0 when home is inside. */
+  distanceM: number;
+  /** Rings of [lon, lat] pairs. */
+  rings: [number, number][][];
+}
+
+export interface RefDetection {
+  lat: number;
+  lon: number;
+  acquiredAt: string;
+  satellite: string;
+  confidence: 'low' | 'nominal' | 'high' | 'unknown';
+  distanceM: number;
+}
+
+export type RefPart<T> =
+  | { available: true; items: T[]; fetchedAt: string; source: string }
+  | { available: false; reason: 'outside_us' | 'no_key' | 'bad_key' | 'failed'; source: string };
+
+export interface ReferenceData {
+  perimeters: RefPart<RefPerimeter>;
+  detections: RefPart<RefDetection>;
+  fetchedAt: string;
+  radiusM: number;
+  notes: string[];
+}
+
+const referenceByPlace = new Map<string, Promise<ReferenceData>>();
+let lastReference: { key: string; data: ReferenceData } | null = null;
+
+const placeKey = (p: { lat: number; lon: number; country: string }) => `${p.lat.toFixed(4)},${p.lon.toFixed(4)},${p.country}`;
+
+/**
+ * Real fire perimeters (US) and satellite detections near home, for the reference layer.
+ * One request per address per page load; the server also keeps answers for 30 minutes.
+ */
+export function fetchReference(place: { lat: number; lon: number; country: string }): Promise<ReferenceData> {
+  const key = placeKey(place);
+  const known = referenceByPlace.get(key);
+  if (known) return known;
+  const p = new URLSearchParams({ lat: String(place.lat), lon: String(place.lon), country: place.country });
+  const req = getJson<ReferenceData>(`/api/reference?${p}`).then((data) => {
+    lastReference = { key, data };
+    return data;
+  });
+  // A failed request may be tried again with the next toggle.
+  req.catch(() => referenceByPlace.delete(key));
+  referenceByPlace.set(key, req);
+  return req;
+}
+
+/** The reference answer last shown for this address, or null when the layer was not used. */
+export function usedReference(place: { lat: number; lon: number; country: string } | null): ReferenceData | null {
+  return place && lastReference?.key === placeKey(place) ? lastReference.data : null;
+}

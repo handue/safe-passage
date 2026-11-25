@@ -142,6 +142,15 @@ export function ModelNotes({ run, area, prepared, which = 'main' }: { run: Drill
 }
 
 /** Shown when there is no drill, no way out, or the fire started outside the area. Returns null if the run is usable. */
+/** Data sources for this run; the wind entry names where the drill wind really came from. */
+export function dataSources(area: AreaData, wind: Wind, isDemo: boolean): string {
+  const keys = Object.keys(area.fetchedAt).filter((k) => !/^wind\b/i.test(k));
+  const word = windSourceWord(wind, isDemo);
+  if (word === 'forecast') keys.push(...Object.keys(area.fetchedAt).filter((k) => /^wind\b/i.test(k)));
+  else keys.push(word === 'demo preset' ? 'Wind: demo preset (a strong wind day)' : 'Wind: set by you');
+  return keys.join(', ') || 'saved area data';
+}
+
 export function DrillProblem({ run, prepared, isDemo }: { run: DrillRun | null; prepared: PreparedArea; isDemo: boolean }) {
   if (!run) {
     return (
@@ -341,7 +350,7 @@ export function ResultsScreen() {
             </div>
           </div>
           <p className="how-data">
-            Data: {Object.keys(area.fetchedAt).join(', ') || 'saved area data'}. Routes: our own shortest-time routing on the OpenStreetMap road graph.
+            Data: {dataSources(area, run.setup.wind, state.isDemo)}. Routes: our own shortest-time routing on the OpenStreetMap road graph.
           </p>
         </section>
       </section>

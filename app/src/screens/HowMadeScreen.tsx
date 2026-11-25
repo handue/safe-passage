@@ -1,6 +1,7 @@
 // Screen 9: how this plan was made. Sources with real fetch times, fallbacks, method, assumptions and limits.
 import { useApp } from '../app/state';
 import { loadedInfo } from '../app/load';
+import { usedReference, type RefPart } from '../app/api';
 import { Tag } from '../ui/Tag';
 import { fmtDist, fmtSquare, unitsFor } from '../ui/units';
 import '../styles/entry.css';
@@ -21,6 +22,24 @@ function find(fetchedAt: Record<string, string> | undefined, prefix: string): { 
   return null;
 }
 
+const REF_REASON: Record<'outside_us' | 'no_key' | 'bad_key' | 'failed', string> = {
+  outside_us: 'not used (outside the US)',
+  no_key: 'not used (no key)',
+  bad_key: 'not used (key not accepted)',
+  failed: 'not used (service did not answer)',
+};
+
+/** The Fetched cell for one part of the reference layer: its fetch time, or why there is none. */
+export function refFetchedCell(part: RefPart<unknown> | null, hasArea: boolean): { iso: string } | { text: string } {
+  if (!hasArea) return { text: 'no address yet' };
+  if (!part) return { text: 'not used (layer off)' };
+  return part.available ? { iso: part.fetchedAt } : { text: REF_REASON[part.reason] };
+}
+
+function RefFetched({ cell }: { cell: { iso: string } | { text: string } }) {
+  return 'iso' in cell ? <When iso={cell.iso} /> : <span className="muted">{cell.text}</span>;
+}
+
 export function HowMadeScreen() {
   const { state } = useApp();
   const { area, prepared, plan } = state;
@@ -34,6 +53,7 @@ export function HowMadeScreen() {
   const grid = prepared?.fireGrid;
   const none = area ? 'not used' : 'no address yet';
   const units = unitsFor(area?.country);
+  const ref = area ? usedReference({ lat: area.home.lat, lon: area.home.lon, country: area.country ?? '' }) : null;
 
   return (
     <main className="narrow">
@@ -119,12 +139,31 @@ export function HowMadeScreen() {
                 </td>
               </tr>
               <tr>
-                <td>Recent heat detections (reference)</td>
+                <td>Current fire perimeters (reference)</td>
                 <td>
-                  NASA FIRMS; NIFC perimeters in the US. Reference only, never part of the drill.
-                  {area && area.country !== 'us' ? ' Outside the US, official perimeters are hidden.' : ''}
+                  NIFC WFIGS Interagency Perimeters (Current), US only, within {fmtDist(50000, units)} of home. Reference only, never part of the drill.
+                  {area && area.country !== 'us' ? ' Not requested for this address: it is outside the US.' : ''}
+                  {ref && !ref.perimeters.available && ref.perimeters.reason === 'failed' ? ' The service did not answer.' : ''}
                 </td>
-                <td className="muted">not used</td>
+                <td>
+                  <RefFetched cell={refFetchedCell(ref?.perimeters ?? null, !!area)} />
+                </td>
+              </tr>
+              <tr>
+                <td>Satellite heat detections (reference)</td>
+                <td>
+                  NASA FIRMS, VIIRS on NOAA-20 and NOAA-21, last 48 hours. A detection is not a confirmed fire. Reference only, never part of the drill.
+                  {ref && !ref.detections.available
+                    ? ref.detections.reason === 'no_key'
+                      ? ' Not shown: it needs a free NASA FIRMS key.'
+                      : ref.detections.reason === 'bad_key'
+                        ? ' Not shown: the key was not accepted.'
+                        : ' The service did not answer.'
+                    : ''}
+                </td>
+                <td>
+                  <RefFetched cell={refFetchedCell(ref?.detections ?? null, !!area)} />
+                </td>
               </tr>
               <tr>
                 <td>Plan wording</td>

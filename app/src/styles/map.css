@@ -95,3 +95,14 @@
   line-height: 1.5;
   pointer-events: none;
 }
+
+/* Reference layer: real current fire perimeters (NIFC) and satellite heat detections (NASA FIRMS).
+   Never part of the drill, so it has its own color (violet) and pattern (cross-hatch, solid edge),
+   unlike the drill's orange fire cells. */
+.sp-map { --ref: #c9a8ff; }
+.sp-map .ref-area { stroke: none; }
+.sp-map .ref-hatch { stroke: var(--ref); stroke-opacity: .55; stroke-width: 1.2px; fill: none; }
+.sp-map .ref-edge-back { fill: none; stroke: #081017; stroke-opacity: .8; stroke-width: 5px; stroke-linejoin: round; }
+.sp-map .ref-edge { fill: none; stroke: var(--ref); stroke-width: 2.2px; stroke-linejoin: round; }
+.sp-map .ref-det { fill: var(--ref); stroke: #081017; stroke-width: 1.5px; }
+.map.sp-map svg text.t-ref { fill: var(--ref); font-weight: 700; }

@@ -44,7 +44,22 @@ export interface MapViewProps {
   fireCaption?: string | null;
   /** Units for distances and wind speed on the map. Default "mi" (miles, mph). */
   units?: MapUnits;
+  /**
+   * Reference only, never part of the drill: real current fire perimeters (rings in local XY)
+   * and satellite heat detections, drawn in their own color and pattern.
+   */
+  reference?: RefLayer | null;
+  /** Optional: told how many reference perimeters and detections are actually drawn in view (null when none is given). */
+  onReferenceDrawn?: (drawn: { perimeters: number; detections: number } | null) => void;
 }
+
+export interface RefLayer {
+  /** Each perimeter is a list of rings (even-odd fill, so holes stay open). */
+  perimeters: XY[][][];
+  detections: XY[];
+}
+
+export const REF_PERIMETER_LABELS = ['Current fire perimeter (NIFC)', 'Fire perimeter (NIFC)', 'NIFC perimeter'];
 
 // ---------- View geometry ----------
 
@@ -495,13 +510,107 @@ const square = (x: number, y: number, r: number): Box => ({ x0: x - r, y0: y - r
 /** Average glyph width as a share of the font size (bold, spaced capitals run wider). */
 function charWidth(text: string, cls: string): number {
   if (cls.includes('t-fire')) return text === text.toUpperCase() ? 0.74 : 0.64;
-  if (cls.includes('t-closed') || cls.includes('t-route')) return 0.58;
+  if (cls.includes('t-closed') || cls.includes('t-route') || cls.includes('t-ref')) return 0.58;
   return 0.56;
 }
+
+/** True when the segment a-b passes through the box (Liang-Barsky clipping). */
+export function segHitsBox(a: XY, b: XY, r: Box): boolean {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const p = [-dx, dx, -dy, dy];
+  const q = [a.x - r.x0, r.x1 - a.x, a.y - r.y0, r.y1 - a.y];
+  let t0 = 0;
+  let t1 = 1;
+  for (let i = 0; i < 4; i++) {
+    if (p[i] === 0) {
+      if (q[i] < 0) return false;
+      continue;
+    }
+    const t = q[i] / p[i];
+    if (p[i] < 0) {
+      if (t > t1) return false;
+      if (t > t0) t0 = t;
+    } else {
+      if (t < t0) return false;
+      if (t < t1) t1 = t;
+    }
+  }
+  return true;
+}
+
+/** True when any segment of any line passes through the box. */
+export function boxCrossesLines(b: Box, lines: XY[][]): boolean {
+  for (const pts of lines) for (let i = 1; i < pts.length; i++) if (segHitsBox(pts[i - 1], pts[i], b)) return true;
+  return false;
+}
+
+function insideRings(rings: XY[][], x: number, y: number): boolean {
+  let inside = false;
+  for (const ring of rings) {
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const a = ring[i];
+      const b = ring[j];
+      if (a.y > y !== b.y > y && x < ((b.x - a.x) * (y - a.y)) / (b.y - a.y) + a.x) inside = !inside;
+    }
+  }
+  return inside;
+}
+
+/**
+ * The visible part of each reference perimeter as grid cells of size g (SVG units) inside the
+ * frame x0..x1, 0..VB: cells whose center is inside the shape (even-odd) or that its edge crosses.
+ * Used to keep labels off the perimeters and to put the perimeter label next to what is visible.
+ */
+export function refAreaCells(perimeters: XY[][][], x0: number, x1: number, g: number): Box[][] {
+  const cols = Math.ceil((x1 - x0) / g);
+  const rows = Math.ceil(VB / g);
+  return perimeters.map((rings) => {
+    const hit = new Set<number>();
+    const mark = (x: number, y: number) => {
+      const i = Math.floor((x - x0) / g);
+      const j = Math.floor(y / g);
+      if (i >= 0 && i < cols && j >= 0 && j < rows) hit.add(j * cols + i);
+    };
+    let bx0 = Infinity, bx1 = -Infinity, by0 = Infinity, by1 = -Infinity;
+    for (const ring of rings) {
+      for (let k = 0; k < ring.length; k++) {
+        const a = ring[k];
+        const b = ring[(k + 1) % ring.length];
+        bx0 = Math.min(bx0, a.x); bx1 = Math.max(bx1, a.x); by0 = Math.min(by0, a.y); by1 = Math.max(by1, a.y);
+        const n = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / (g / 2)));
+        for (let t = 0; t < n; t++) mark(a.x + ((b.x - a.x) * t) / n, a.y + ((b.y - a.y) * t) / n);
+      }
+    }
+    const i0 = Math.max(0, Math.floor((bx0 - x0) / g));
+    const i1 = Math.min(cols - 1, Math.floor((bx1 - x0) / g));
+    const j0 = Math.max(0, Math.floor(by0 / g));
+    const j1 = Math.min(rows - 1, Math.floor(by1 / g));
+    for (let j = j0; j <= j1; j++) {
+      for (let i = i0; i <= i1; i++) {
+        if (!hit.has(j * cols + i) && insideRings(rings, x0 + (i + 0.5) * g, (j + 0.5) * g)) hit.add(j * cols + i);
+      }
+    }
+    return [...hit].sort((a, b) => a - b).map((key) => {
+      const i = key % cols;
+      const j = Math.floor(key / cols);
+      return { x0: x0 + i * g, y0: j * g, x1: x0 + (i + 1) * g, y1: (j + 1) * g };
+    });
+  });
+}
+
+/** Cell size (CSS px) for the reference perimeter collision grid. */
+const REF_CELL_PX = 16;
+/** A perimeter with less than this much visible area (in CSS px squared) gets no label. */
+const REF_LABEL_MIN_PX2 = 1600;
+/** Perimeters covering more than this share of the frame are not kept clear of labels (labels have halos). */
+const REF_RESERVE_MAX_SHARE = 0.35;
 
 export class Placer {
   markers: Box[] = [];
   labels: Box[] = [];
+  /** Areas labels keep off (the reference perimeters); drawn under the labels. */
+  areas: Box[] = [];
   fs: number;
   x0: number;
   x1: number;
@@ -516,8 +625,8 @@ export class Placer {
   fits(b: Box): boolean {
     return b.x0 >= this.x0 + 4 && b.x1 <= this.x1 - 4 && b.y0 >= 4 && b.y1 <= VB - 4;
   }
-  free(b: Box): boolean {
-    return !this.markers.some((o) => overlaps(b, o)) && !this.labels.some((o) => overlaps(b, o));
+  free(b: Box, withAreas = true): boolean {
+    return !this.markers.some((o) => overlaps(b, o)) && !this.labels.some((o) => overlaps(b, o)) && (!withAreas || !this.areas.some((o) => overlaps(b, o)));
   }
   box(x: number, y: number, text: string, anchor: Anchor, cls = ''): Box {
     const w = text.length * this.fs * charWidth(text, cls);
@@ -528,11 +637,18 @@ export class Placer {
     this.markers.push(b);
   }
   /** The first text and spot (texts in order, longest first) that fits without overlap, reserved. */
-  place(spots: Spot[], texts: string[], cls: string): Label | null {
+  place(spots: Spot[], texts: string[], cls: string, ok: (b: Box) => boolean = () => true, clampX = false): Label | null {
     for (const text of texts) {
-      for (const s of spots) {
+      for (const s0 of spots) {
+        let s = s0;
+        if (clampX) {
+          // Slide the label sideways to stay inside the frame (for labels tied to an area, not a point).
+          const b0 = this.box(s0.x, s0.y, text, s0.anchor, cls);
+          const dx = Math.max(0, this.x0 + 4 - b0.x0) - Math.max(0, b0.x1 - (this.x1 - 4));
+          s = { ...s0, x: s0.x + dx };
+        }
         const b = this.box(s.x, s.y, text, s.anchor, cls);
-        if (this.fits(b) && this.free(b)) {
+        if (this.fits(b) && this.free(b) && ok(b)) {
           this.labels.push(b);
           return { x: s.x, y: s.y, text, anchor: s.anchor, cls, box: b };
         }
@@ -601,6 +717,10 @@ export interface LayoutInput {
   wind: Wind | null | undefined;
   caption: string | null;
   notes: { x: number; y: number; text: string; cls: string }[];
+  /** Reference layer: the visible part of each in-view perimeter as cells (SVG units), nearest perimeter first. */
+  refCells?: Box[][] | null;
+  /** Drawn route lines in SVG units; the reference label never crosses them. */
+  routeLines?: XY[][];
   cornerNotes: string[];
   /** Fire square in SVG units. */
   grid: { x: number; y: number; w: number };
@@ -654,6 +774,11 @@ export function layoutMap(input: LayoutInput): MapLayout {
     const s = input.ignition.selected;
     if (s && !s.suggestion) placer.marker(square(s.x, s.y, 26 * u));
   }
+  // Reference perimeters: labels and the wind arrow keep off them, unless they cover much of the map.
+  const refCells = input.refCells ?? [];
+  const cellArea = (b: Box) => (b.x1 - b.x0) * (b.y1 - b.y0);
+  const refArea = refCells.flat().reduce((sum, b) => sum + cellArea(b), 0);
+  if (refArea > 0 && refArea <= REF_RESERVE_MAX_SHARE * (fx1 - fx0) * VB) placer.areas = refCells.flat();
 
   // 2. Wind: arrow and text in the top-right corner, else another corner. The bottom-right
   // corner holds the map credit, so it comes last.
@@ -678,8 +803,8 @@ export function layoutMap(input: LayoutInput): MapLayout {
       break;
     }
     if (!wind && arrow) {
-      // No corner has room for the words: keep the arrow alone where it fits.
-      const c = corners.find((k) => placer.free(square(k.ax, k.ay, 26 * u)));
+      // No corner has room for the words: keep the arrow alone where it fits, off the perimeters if possible.
+      const c = corners.find((k) => placer.free(square(k.ax, k.ay, 26 * u))) ?? corners.find((k) => placer.free(square(k.ax, k.ay, 26 * u), false));
       if (c) {
         placer.marker(square(c.ax, c.ay, 26 * u));
         wind = { ax: c.ax, ay: c.ay, arrow, text: null };
@@ -737,6 +862,36 @@ export function layoutMap(input: LayoutInput): MapLayout {
     push(placer.place(spots, [n.text], n.cls));
   }
 
+  // 8b. Reference perimeter label (real fire, not the drill), right next to the visible part of
+  // the nearest perimeter that shows enough of itself. Never across a route; left out when no spot fits.
+  const labelled = refCells.find((cells) => cells.reduce((sum, b) => sum + cellArea(b), 0) >= REF_LABEL_MIN_PX2 * u * u);
+  if (labelled) {
+    const b = labelled.reduce((a, c) => ({ x0: Math.min(a.x0, c.x0), y0: Math.min(a.y0, c.y0), x1: Math.max(a.x1, c.x1), y1: Math.max(a.y1, c.y1) }));
+    const gap = 6 * u;
+    const cx = (b.x0 + b.x1) / 2;
+    const cy = (b.y0 + b.y1) / 2 + fs * 0.35;
+    const below = b.y1 + gap + fs * 0.95;
+    const above = b.y0 - gap - fs * 0.3;
+    const spots: Spot[] = [
+      { x: cx, y: below, anchor: 'middle' }, { x: b.x1, y: below, anchor: 'end' }, { x: b.x0, y: below, anchor: 'start' },
+      { x: cx, y: above, anchor: 'middle' }, { x: b.x1, y: above, anchor: 'end' }, { x: b.x0, y: above, anchor: 'start' },
+      { x: b.x0 - gap, y: cy, anchor: 'end' }, { x: b.x1 + gap, y: cy, anchor: 'start' },
+    ];
+    // Spots toward the middle of the map first: there is more room there than against the frame edge.
+    const mid = { x: (fx0 + fx1) / 2, y: VB / 2 };
+    const score = (s: Spot) => Math.hypot(s.x - mid.x, s.y - mid.y);
+    spots.sort((a, c) => score(a) - score(c));
+    const lines = input.routeLines ?? [];
+    const pad = 4 * u;
+    // Still next to the shape after sliding into the frame: the box must stay within a line of it.
+    const near = (box: Box) => box.x1 >= b.x0 - fs && box.x0 <= b.x1 + fs && box.y1 >= b.y0 - fs * 2 && box.y0 <= b.y1 + fs * 2;
+    // A real gap from every other label (Home above all): boxes that only just miss read as one
+    // label on screen, e.g. "Home NIFC perimeter", as if the home were the perimeter.
+    const apart = (box: Box) => !placer.labels.some((o) => overlaps({ x0: box.x0 - fs * 1.5, y0: box.y0 - fs * 0.6, x1: box.x1 + fs * 1.5, y1: box.y1 + fs * 0.6 }, o));
+    const clear = (box: Box) => near(box) && apart(box) && !boxCrossesLines({ x0: box.x0 - pad, y0: box.y0 - pad, x1: box.x1 + pad, y1: box.y1 + pad }, lines);
+    push(placer.place(spots, REF_PERIMETER_LABELS, 't-ref', clear, true));
+  }
+
   // 9. Sea, in open water.
   const seaSpots = input.sea.flatMap((p) => [0, -1.6, 1.6].map((k) => ({ x: p.x, y: p.y + fs * (0.35 + k), anchor: 'middle' as const })));
   push(placer.place(seaSpots, ['Sea'], 't-sea'));
@@ -787,6 +942,26 @@ export function layoutMap(input: LayoutInput): MapLayout {
 }
 
 const sameXY = (a: XY | null, b: XY) => !!a && Math.abs(a.x - b.x) < 1 && Math.abs(a.y - b.y) < 1;
+
+/** What of the reference layer falls inside the frame, and where its label goes (nearest edge point to home). */
+export function refInView(v: View, ref: RefLayer, home: XY, insetM: number): { perimeters: XY[][][]; detections: XY[]; labelAt: XY | null } {
+  const perimeters = ref.perimeters.filter((rings) => rings.some((r) => shapeTouchesView(v, r)));
+  let labelAt: XY | null = null;
+  let best = Infinity;
+  for (const rings of perimeters) {
+    for (const ring of rings) {
+      for (const p of ring) {
+        if (!inFrame(v, p, insetM)) continue;
+        const d = dist(home, p);
+        if (d < best) {
+          best = d;
+          labelAt = p;
+        }
+      }
+    }
+  }
+  return { perimeters, detections: ref.detections.filter((p) => inFrame(v, p)), labelAt };
+}
 
 const STYLE_WORDS: Record<RouteStyle, (label: string) => string> = {
   main: (l) => `Solid cyan line: ${l}.`,
@@ -840,7 +1015,9 @@ function roadNameRuns(prepared: PreparedArea, v: View, insetM: number, drawn: { 
 export function MapView(props: MapViewProps) {
   const { prepared, routes = [], fire = null, closure = null, wind, terrain = true, ignition = null, notes = [], units = 'mi' } = props;
   const svgRef = useRef<SVGSVGElement>(null);
-  const glowId = `glow-${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`;
+  const uid = useId().replace(/[^a-zA-Z0-9_-]/g, '');
+  const glowId = `glow-${uid}`;
+  const refHatchId = `refhatch-${uid}`;
   const [px, setPx] = useState(640);
   /** Frame width over height. Above 1 the frame is capped in height, and the view widens to fill it. */
   const [aspect, setAspect] = useState(1);
@@ -895,6 +1072,19 @@ export function MapView(props: MapViewProps) {
   const leavesGrid = drawn.find((r) => r.shape.some((p) => !isInGrid(fireGrid, p))) ?? null;
 
   const dests = destMarks(prepared, view, u, routes);
+  const reference = props.reference ?? null;
+  const refShown = useMemo(() => (reference ? refInView(view, reference, homeXY, insetM) : null), [reference, view, homeXY, insetM]);
+  // Tell the screen what is drawn, so a legend outside the map names only marks that are on it.
+  const onReferenceDrawn = props.onReferenceDrawn;
+  const drawnPerims = refShown ? refShown.perimeters.length : -1;
+  const drawnDets = refShown ? refShown.detections.length : -1;
+  useEffect(() => {
+    onReferenceDrawn?.(drawnPerims < 0 ? null : { perimeters: drawnPerims, detections: drawnDets });
+  }, [onReferenceDrawn, drawnPerims, drawnDets]);
+  const refCells = useMemo(
+    () => (refShown ? refAreaCells(refShown.perimeters.map((rings) => rings.map((ring) => ring.map((p) => ({ x: sx(view, p.x), y: sy(view, p.y) })))), fx0, fx1, REF_CELL_PX * u) : null),
+    [refShown, view, fx0, fx1, u],
+  );
 
   const hx = sx(view, homeXY.x);
   const hy = sy(view, homeXY.y);
@@ -934,6 +1124,8 @@ export function MapView(props: MapViewProps) {
       text: n.text,
       cls: n.tone === 'short' ? 't-closed' : n.tone === 'route' ? 't-route' : 't-road',
     })),
+    refCells,
+    routeLines: drawn.map((r) => r.shape.map(toSvgXY)),
     cornerNotes,
     grid: { x: gridX, y: gridY, w: extentSvg },
     sea: sea ? sea.labelAt.map(toSvgXY) : [],
@@ -992,6 +1184,8 @@ export function MapView(props: MapViewProps) {
     noteParts.push(`${names.join(' and ')} ${dests.length > 1 ? 'are candidate destinations, not confirmed shelters' : 'is a candidate destination, not a confirmed shelter'}.`);
   }
   for (const note of notes) noteParts.push(`At the closure point, ${note.text.charAt(0).toLowerCase()}${note.text.slice(1)}.`);
+  if (refShown && refShown.perimeters.length > 0) noteParts.push('Violet hatched outline: current fire perimeter (NIFC), reference only, not part of the drill.');
+  if (refShown && refShown.detections.length > 0) noteParts.push('Violet diamonds: satellite heat detections (NASA FIRMS), reference only.');
   if (leavesGrid) noteParts.push('Past the dashed square the fire is not modeled.');
   if (flat) noteParts.push('No elevation data: terrain is drawn flat.');
 
@@ -1016,6 +1210,11 @@ export function MapView(props: MapViewProps) {
             <filter id={glowId} x="-20%" y="-20%" width="140%" height="140%">
               <feGaussianBlur stdDeviation={r1(blur)} />
             </filter>
+            {refShown && (
+              <pattern id={refHatchId} patternUnits="userSpaceOnUse" width={r1(9 * u)} height={r1(9 * u)} patternTransform="rotate(45)">
+                <path d={`M0 0V${r1(9 * u)}M0 0H${r1(9 * u)}`} className="ref-hatch" />
+              </pattern>
+            )}
           </defs>
           <rect className="sp-ground" x={fx0} y={0} width={fx1 - fx0} height={VB} />
 
@@ -1034,6 +1233,27 @@ export function MapView(props: MapViewProps) {
               d={`M${r1(fx0)} 0H${r1(fx1)}V${VB}H${r1(fx0)}Z M${r1(gridX)} ${r1(gridY)}h${r1(extentSvg)}v${r1(extentSvg)}h${r1(-extentSvg)}Z`}
             />
             <rect className="sp-gridedge" x={gridX} y={gridY} width={extentSvg} height={extentSvg} />
+
+            {refShown && (
+              <g className="ref-layer">
+                {refShown.perimeters.map((rings, i) => {
+                  const d = rings.map((r) => `${polyD(view, r)}Z`).join('');
+                  return (
+                    <g key={i}>
+                      <path d={d} fillRule="evenodd" fill={`url(#${refHatchId})`} className="ref-area" />
+                      <path d={d} className="ref-edge-back" />
+                      <path d={d} className="ref-edge" />
+                    </g>
+                  );
+                })}
+                {refShown.detections.map((p, i) => {
+                  const x = sx(view, p.x);
+                  const y = sy(view, p.y);
+                  const s = 5.5 * u;
+                  return <path key={i} d={`M${r1(x)} ${r1(y - s)}L${r1(x + s)} ${r1(y)}L${r1(x)} ${r1(y + s)}L${r1(x - s)} ${r1(y)}Z`} className="ref-det" />;
+                })}
+              </g>
+            )}
 
             {firePath && (
               <>

@@ -1,16 +1,17 @@
 // Screen 3: the home, its ways out on real roads, and today's wind and slope.
 import { useId, useMemo, useState } from 'react';
+import { ApiError, fetchReference, type ReferenceData } from '../app/api';
 import { DEMO_WIND, isDemoWind, useApp } from '../app/state';
 import { go } from '../app/router';
 import type { PreparedArea } from '../engine/area';
 import { destTitle, edgesLeavingGrid, splitOnSameRoad, tasksMinutes } from '../engine/drill';
 import { cellCenter, cellOf } from '../engine/fire';
 import { bearingDeg, compassName, dist } from '../engine/geo';
-import type { AreaData, Route, Wind } from '../engine/types';
-import { MapView, type MapViewProps } from '../ui/MapView';
+import type { AreaData, Projection, Route, Wind } from '../engine/types';
+import { MapView, type MapViewProps, type RefLayer } from '../ui/MapView';
 import { Tag, fmtMin } from '../ui/Tag';
 import { Icon } from '../ui/Icon';
-import { fmtDist, fmtHeight, fmtSpeed, fmtSquare, minShort, unitsFor } from '../ui/units';
+import { fmtDist, fmtHeight, fmtSpeed, fmtSquare, minShort, unitsFor, type Units } from '../ui/units';
 import { wayOutName } from './ResultsScreen';
 import '../styles/home.css';
 
@@ -49,6 +50,79 @@ function windSource(area: AreaData, wind: Wind): string {
   return key ? key.replace(/^Wind:\s*/, '') : 'forecast';
 }
 
+// ---------- Reference layer (real fires; never part of the drill) ----------
+
+export const REF_DISCLAIMER = 'Reference only. Not part of the drill. Not a live alert.';
+
+/** Perimeters and detections within the reference radius, projected to the map's local XY. */
+export function refLayerFor(data: ReferenceData, proj: Projection): RefLayer {
+  const r = data.radiusM;
+  const perimeters = data.perimeters.available
+    ? data.perimeters.items.filter((p) => p.distanceM <= r).map((p) => p.rings.map((ring) => ring.map(([lon, lat]) => proj.toXY({ lat, lon }))))
+    : [];
+  const detections = data.detections.available ? data.detections.items.filter((d) => d.distanceM <= r).map((d) => proj.toXY({ lat: d.lat, lon: d.lon })) : [];
+  return { perimeters, detections };
+}
+
+/**
+ * When the shown reference data was fetched: the same per-part times "How this plan was made"
+ * shows (answers are reused for 30 minutes, so this can be earlier than the request).
+ */
+export function referenceFetchedLine(data: ReferenceData, when: (iso: string) => string | null = fmtTime): string {
+  const p = data.perimeters.available ? when(data.perimeters.fetchedAt) : null;
+  const d = data.detections.available ? when(data.detections.fetchedAt) : null;
+  if (p && d && p !== d) return `Perimeters fetched ${p}; satellite detections fetched ${d}.`;
+  if (p || d) return `Fetched ${p ?? d}.`;
+  return `Checked ${when(data.fetchedAt) ?? 'just now'}.`;
+}
+
+const acresFmt = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
+
+/** Side-panel sentences for the reference layer, in the household's units. */
+export function referenceLines(data: ReferenceData, units: Units, when: (iso: string) => string | null = fmtTime): { perimeters: string; detections: string; detectionsHint: string | null } {
+  const within = fmtDist(data.radiusM, units);
+  let perimeters: string;
+  const P = data.perimeters;
+  if (!P.available) {
+    perimeters =
+      P.reason === 'outside_us'
+        ? 'NIFC fire perimeters cover the US only, so none are shown for this address.'
+        : 'The NIFC perimeter service did not answer. The drill is not affected. Try the layer again later.';
+  } else {
+    const near = P.items.filter((p) => p.distanceM <= data.radiusM);
+    const first = near[0];
+    if (!first) perimeters = `No current perimeters within ${within}.`;
+    else {
+      const facts = [first.acres !== null ? `${acresFmt.format(first.acres)} acres` : null, first.updatedAt && when(first.updatedAt) ? `updated ${when(first.updatedAt)}` : null].filter(Boolean).join(', ');
+      const where = first.distanceM === 0 ? `Your address is inside the mapped perimeter of the ${first.name} fire` : `Nearest current perimeter: ${first.name}, ${fmtDist(first.distanceM, units)} away`;
+      const more = near.length > 1 ? ` ${near.length} perimeters within ${within}.` : '';
+      perimeters = `${where}${facts ? ` (${facts})` : ''}.${more}`;
+    }
+  }
+  const D = data.detections;
+  let detections: string;
+  let detectionsHint: string | null = null;
+  if (!D.available) {
+    if (D.reason === 'no_key') {
+      detections = 'Satellite detections need a free NASA FIRMS key.';
+      detectionsHint = 'Put FIRMS_MAP_KEY=... in app/.env and restart the server.';
+    } else if (D.reason === 'bad_key') {
+      detections = 'NASA FIRMS did not accept the key, so satellite detections are not shown.';
+    } else {
+      detections = 'NASA FIRMS did not answer, so satellite detections are not shown. Try the layer again later.';
+    }
+  } else {
+    const n = D.items.filter((d) => d.distanceM <= data.radiusM).length;
+    detections =
+      n === 0
+        ? `No satellite heat detections within ${within} in the last 48 hours (NASA FIRMS).`
+        : `${n} satellite heat detection${n === 1 ? '' : 's'} within ${within} in the last 48 hours (NASA FIRMS). A detection is not a confirmed fire.`;
+  }
+  return { perimeters, detections, detectionsHint };
+}
+
+type RefState = { status: 'idle' | 'loading' } | { status: 'ready'; data: ReferenceData } | { status: 'error'; message: string };
+
 function fmtTime(iso?: string): string | null {
   if (!iso) return null;
   const d = new Date(iso);
@@ -76,6 +150,22 @@ function HomeMap({ area, prepared }: { area: AreaData; prepared: PreparedArea })
   const ids = useId();
   const [showWind, setShowWind] = useState(true);
   const [showTerrain, setShowTerrain] = useState(true);
+  const [showRef, setShowRef] = useState(false);
+  const [ref, setRef] = useState<RefState>({ status: 'idle' });
+  // What the map actually draws of the reference layer (in view), so the legend matches the map.
+  const [refDrawn, setRefDrawn] = useState<{ perimeters: number; detections: number } | null>(null);
+
+  // The reference layer loads only when it is turned on (one request; answers are reused).
+  const toggleRef = (on: boolean) => {
+    setShowRef(on);
+    if (!on || ref.status === 'ready' || ref.status === 'loading') return;
+    setRef({ status: 'loading' });
+    fetchReference({ lat: area.home.lat, lon: area.home.lon, country: area.country ?? '' }).then(
+      (data) => setRef({ status: 'ready', data }),
+      (err) => setRef({ status: 'error', message: err instanceof ApiError && err.code === 'network' ? 'Could not reach the Safe Passage server.' : 'The reference data could not be loaded.' }),
+    );
+  };
+  const refLayer = useMemo(() => (ref.status === 'ready' ? refLayerFor(ref.data, prepared.proj) : null), [ref, prepared]);
 
   const w = prepared.waysOut;
   const { main, backup } = w;
@@ -124,20 +214,44 @@ function HomeMap({ area, prepared }: { area: AreaData; prepared: PreparedArea })
               <input type="checkbox" checked={showTerrain && hasTerrain} disabled={!hasTerrain} onChange={(e) => setShowTerrain(e.target.checked)} /> Terrain
               {!hasTerrain && <span className="small muted">(no elevation data)</span>}
             </label>
-            <label className="row home-disabled">
-              <input type="checkbox" checked={false} disabled aria-describedby={`${ids}-ref`} /> Satellite heat and US fire perimeters (reference only)
-              <span className="chip" id={`${ids}-ref`}>Coming soon</span>
+            <label className="row">
+              <input type="checkbox" checked={showRef} onChange={(e) => toggleRef(e.target.checked)} aria-describedby={`${ids}-ref`} /> Real fires nearby
+              <span className="small muted" id={`${ids}-ref`}>(reference only)</span>
             </label>
           </fieldset>
         </div>
-        <MapView prepared={prepared} routes={routes} wind={showWind ? wind : null} terrain={showTerrain && hasTerrain} size="full" units={units} ariaLabel={ariaLabel} />
+        <MapView
+          prepared={prepared}
+          routes={routes}
+          wind={showWind ? wind : null}
+          terrain={showTerrain && hasTerrain}
+          size="full"
+          units={units}
+          ariaLabel={ariaLabel + (showRef && refLayer ? ` Reference layer: ${refLayer.perimeters.length} current fire perimeters and ${refLayer.detections.length} satellite detections nearby, not part of the drill.` : '')}
+          reference={showRef ? refLayer : null}
+          onReferenceDrawn={setRefDrawn}
+        />
         <p className="small muted">
           {/* On phones the map's own note already gives the line key and the credit. */}
           <span className="home-mapkey">
             {main && <>Solid line: way out A. {backup && 'Dashed line: way out B. '}</>}
             Map data © OpenStreetMap contributors.{' '}
           </span>
-          The reference layer will show NASA FIRMS heat detections and, in the US, NIFC fire perimeters. It is never part of a drill.
+          {showRef ? (
+            <span className="home-refline">
+              {/* On phones the map's own note already names the outline and the diamonds. */}
+              {/* Name only the marks the map draws, as the phone note does. */}
+              {refDrawn && (refDrawn.perimeters > 0 || refDrawn.detections > 0) && (
+                <span className="home-refkey">
+                  {refDrawn.perimeters > 0 && <><i className="home-refswatch" aria-hidden="true" /> Violet hatched outline: current fire perimeter (NIFC).{' '}</>}
+                  {refDrawn.detections > 0 && <>Violet diamonds: satellite heat detections (NASA FIRMS).{' '}</>}
+                </span>
+              )}
+              <b>{REF_DISCLAIMER}</b>
+            </span>
+          ) : (
+            <>&ldquo;Real fires nearby&rdquo; shows NIFC fire perimeters (US) and NASA FIRMS satellite heat detections. Reference only, never part of a drill.</>
+          )}
         </p>
       </section>
 
@@ -257,6 +371,8 @@ function HomeMap({ area, prepared }: { area: AreaData; prepared: PreparedArea })
           )}
         </div>
 
+        {showRef && <ReferencePanel state={ref} units={units} />}
+
         {area.fallbacksUsed.length > 0 && (
           <div className="stack-s">
             <h2 className="home-h">Data notes</h2>
@@ -276,5 +392,38 @@ function HomeMap({ area, prepared }: { area: AreaData; prepared: PreparedArea })
         </div>
       </aside>
     </main>
+  );
+}
+
+function ReferencePanel({ state, units }: { state: RefState; units: Units }) {
+  return (
+    <div className="stack-s home-ref" role="status" aria-live="polite">
+      <h2 className="home-h">Real fires nearby</h2>
+      <p className="home-ref-flag">
+        <Icon name="warn" /> <b>{REF_DISCLAIMER}</b>
+      </p>
+      {state.status === 'ready' ? (
+        <ReferenceText data={state.data} units={units} />
+      ) : state.status === 'error' ? (
+        <p>{state.message} The drill is not affected. Try the layer again later.</p>
+      ) : (
+        <p className="muted">Loading current fire data…</p>
+      )}
+      <p className="small muted">Follow official alerts and local evacuation orders.</p>
+    </div>
+  );
+}
+
+function ReferenceText({ data, units }: { data: ReferenceData; units: Units }) {
+  const lines = referenceLines(data, units);
+  return (
+    <>
+      <p>{lines.perimeters}</p>
+      <p>
+        {lines.detections}
+        {lines.detectionsHint && <span className="small muted"> {lines.detectionsHint}</span>}
+      </p>
+      <p className="small muted">{referenceFetchedLine(data)}</p>
+    </>
   );
 }

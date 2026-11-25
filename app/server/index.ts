@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import type { AreaData } from '../src/engine/types.ts';
 import { buildArea, geocode, GeocodeRejectedError, newProgress, RoadsUnavailableError, type AreaProgress, type SourceContext } from './sources.ts';
 import { sanitizePlanInput, writePlan } from './plan.ts';
+import { fetchReference, type ReferenceOptions } from './reference.ts';
 
 export const DEFAULT_DEMO_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'demo-area.json');
 export const DEMO_NOTE = 'Live data unavailable: showing the saved demo';
@@ -63,6 +64,8 @@ export function readStatus(key: string, now = Date.now()): AreaStatus | null {
 export interface ServerOptions extends SourceContext {
   demoFile?: string;
   demoDeadlineMs?: number;
+  /** Reference layer (real fires near home): fetcher and FIRMS key overrides for tests. */
+  reference?: ReferenceOptions;
 }
 
 class DeadlineError extends Error {}
@@ -183,6 +186,16 @@ export async function handleRequest(req: IncomingMessage, res: ServerResponse, o
       const status = validKey(key) ? readStatus(key) : null;
       if (status) sendJson(res, 200, status);
       else sendJson(res, 404, { error: 'unknown_key' });
+    } else if (req.method === 'GET' && url.pathname === '/api/reference') {
+      // Reference only: real fires near home. Never part of the drill.
+      const lat = Number(url.searchParams.get('lat'));
+      const lon = Number(url.searchParams.get('lon'));
+      if (!url.searchParams.get('lat') || !url.searchParams.get('lon') || !Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) {
+        sendJson(res, 400, { error: 'bad_coordinates' });
+        return;
+      }
+      const country = (url.searchParams.get('country') ?? '').toLowerCase();
+      sendJson(res, 200, await fetchReference({ lat, lon }, country, { fetcher: opts.fetcher, ...opts.reference }));
     } else if (req.method === 'GET' && url.pathname === '/api/area') {
       await handleArea(url, res, opts);
     } else if (req.method === 'POST' && url.pathname === '/api/plan') {

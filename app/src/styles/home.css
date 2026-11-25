@@ -26,8 +26,6 @@ input[aria-invalid="true"] { border-color: var(--short); }
 /* Home map */
 .home-layers { gap: var(--s4); }
 .home-layers label { gap: var(--s2); font-weight: 600; }
-.home-disabled { color: var(--ink-2); cursor: not-allowed; }
-.home-disabled input { cursor: not-allowed; opacity: .6; }
 .home-h { font-size: var(--t-m); }
 .home-callout { align-items: flex-start; flex-wrap: nowrap; }
 .home-callout .grow { flex: 1; min-width: 0; }
@@ -51,11 +49,23 @@ input[aria-invalid="true"] { border-color: var(--short); }
 }
 
 /* The map note under the map repeats the line key on phones; keep only one. */
-@media (max-width: 900px) { .home-mapkey { display: none; } }
+@media (max-width: 900px) { .home-mapkey, .home-refkey { display: none; } }
+/* The reference key starts its own line, so the swatch sits in front of its own words. */
+.home-refline { display: block; }
 
 /* Touch: layer toggles and the inline household link reach 44 px. */
 @media (pointer: coarse), (max-width: 900px) {
   .home-layers label { min-height: 44px; }
   .home-layers input[type=checkbox] { width: 22px; height: 22px; }
   .home-link { display: inline-flex; align-items: center; min-height: 44px; padding-inline: var(--s1); }
+}
+
+/* Reference layer (real fires, never part of the drill): violet, cross-hatched, as on the map. */
+.home-ref { --ref: #c9a8ff; border-left: 3px solid var(--ref); padding-left: var(--s3); }
+.home-ref-flag { display: flex; gap: var(--s2); align-items: center; margin: 0; }
+.home-ref-flag .icon { width: 20px; height: 20px; color: var(--ref); flex: none; }
+.home-refswatch {
+  display: inline-block; width: 14px; height: 14px; vertical-align: -2px; border: 2px solid #c9a8ff; border-radius: 2px;
+  background: repeating-linear-gradient(45deg, rgba(201, 168, 255, .55) 0 1px, transparent 1px 5px),
+    repeating-linear-gradient(-45deg, rgba(201, 168, 255, .55) 0 1px, transparent 1px 5px);
 }
