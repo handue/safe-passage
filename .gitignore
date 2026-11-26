@@ -14,12 +14,12 @@ app/.cache/
 .impeccable/config.local.json
 .DS_Store
 
-# Private planning notes (contest strategy, decisions log, tooling); kept local only
+# Private planning notes and tooling; kept local only
 PRODUCT.md
 design/DECISIONS.md
 design/screen-map.md
 .impeccable/
 reference/
 
-# Private submission drafts and test notes (local only)
+# Private drafts and test notes (local only)
 private/
