@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import type { AreaData } from '../src/engine/types.ts';
 import { buildArea, geocode, GeocodeRejectedError, newProgress, RoadsUnavailableError, type AreaProgress, type SourceContext } from './sources.ts';
 import { sanitizePlanInput, writePlan } from './plan.ts';
+import { pickSituations, sanitizeSituationsInput } from './situations.ts';
 import { fetchReference, type ReferenceOptions } from './reference.ts';
 
 export const DEFAULT_DEMO_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'demo-area.json');
@@ -198,6 +199,10 @@ export async function handleRequest(req: IncomingMessage, res: ServerResponse, o
       sendJson(res, 200, await fetchReference({ lat, lon }, country, { fetcher: opts.fetcher, ...opts.reference }));
     } else if (req.method === 'GET' && url.pathname === '/api/area') {
       await handleArea(url, res, opts);
+    } else if (req.method === 'POST' && !isSameSiteJsonPost(req)) {
+      // Both POST routes spend the model key. A cross-site "simple" POST (text/plain, no preflight)
+      // or a request from another site's page is refused before the body is read.
+      sendJson(res, 415, { error: 'json_from_this_site_only' });
     } else if (req.method === 'POST' && url.pathname === '/api/plan') {
       const body = await readJsonBody(req, 64 * 1024);
       if (body === null) {
@@ -212,12 +217,43 @@ export async function handleRequest(req: IncomingMessage, res: ServerResponse, o
         if (plan.note) console.log(`plan: fallback (${plan.note})`);
         if (!controller.signal.aborted) sendJson(res, 200, plan);
       }
+    } else if (req.method === 'POST' && url.pathname === '/api/situations') {
+      const body = await readJsonBody(req, 64 * 1024);
+      if (body === null) {
+        sendJson(res, 400, { error: 'bad_body' });
+      } else {
+        // Stop the model call when the browser closes the request.
+        const controller = new AbortController();
+        res.on('close', () => {
+          if (!res.writableFinished) controller.abort();
+        });
+        const out = await pickSituations(sanitizeSituationsInput(body), { signal: controller.signal });
+        if (out.note) console.log(`situations: fallback (${out.note})`);
+        if (!controller.signal.aborted) sendJson(res, 200, out);
+      }
     } else {
       sendJson(res, 404, { error: 'not_found' });
     }
   } catch (err) {
     console.error(err);
     if (!res.headersSent) sendJson(res, 500, { error: 'internal_error' });
+  }
+}
+
+const LOOPBACK = /^(localhost|127\.0\.0\.1|\[::1\]|.+\.localhost)$/i;
+
+/** True for a POST sent as application/json whose Origin, when present, is this server's own host. */
+export function isSameSiteJsonPost(req: IncomingMessage): boolean {
+  const type = String(req.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase();
+  if (type !== 'application/json') return false;
+  const origin = req.headers.origin;
+  if (!origin) return true; // not a browser page (curl, tests): no cross-site risk
+  try {
+    const o = new URL(origin);
+    // Vite's dev proxy rewrites Host to the API's own address, so a page on this machine counts too.
+    return o.host === req.headers.host || LOOPBACK.test(o.hostname);
+  } catch {
+    return false;
   }
 }
 
@@ -240,7 +276,8 @@ export function startServer(port: number, opts: ServerOptions = {}): Server {
   const server = createServer((req, res) => {
     void handleRequest(req, res, opts);
   });
-  server.listen(port);
+  // Dev API: this machine only (Vite proxies to it). The production server (prod.ts) listens itself.
+  server.listen(port, '127.0.0.1');
   return server;
 }
 

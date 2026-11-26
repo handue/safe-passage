@@ -97,7 +97,7 @@ const KIND_WORD: Record<Destination['kind'], string> = {
 };
 
 /** Undirected key for a road segment, so both directions of a two-way road match. */
-function segmentKey(graph: RoadGraph, edgeId: number): string {
+export function segmentKey(graph: RoadGraph, edgeId: number): string {
   const e = graph.edges[edgeId];
   return e.from < e.to ? `${e.from}-${e.to}` : `${e.to}-${e.from}`;
 }
@@ -556,6 +556,14 @@ export interface DrillCoverage {
 
 export type DrillRun = DrillResult & { coverage: DrillCoverage };
 
+/** Where a route ends: its destination's point, else the last edge's end node. */
+export function routeDestXY(prepared: Pick<PreparedForDrill, 'graph' | 'waysOut'>, r: Route): XY {
+  const d = prepared.waysOut.destinations.find((x) => x.id === r.destinationId);
+  if (d) return d.xy;
+  const last = r.edgeIds[r.edgeIds.length - 1];
+  return last === undefined ? { x: 0, y: 0 } : prepared.graph.nodes[prepared.graph.edges[last].to].xy;
+}
+
 export function runDrill(
   prepared: PreparedForDrill,
   tasks: Task[],
@@ -574,12 +582,7 @@ export function runDrill(
   const { closures, points } = edgeClosuresWithPoints(prepared.graph, fire);
   const tasksMin = tasksMinutes(tasks, setup.start);
   const { waysOut } = prepared;
-  const destXY = (r: Route): XY => {
-    const d = waysOut.destinations.find((x) => x.id === r.destinationId);
-    if (d) return d.xy;
-    const last = r.edgeIds[r.edgeIds.length - 1];
-    return last === undefined ? { x: 0, y: 0 } : prepared.graph.nodes[prepared.graph.edges[last].to].xy;
-  };
+  const destXY = (r: Route): XY => routeDestXY(prepared, r);
   const run = (r: Route | null): RouteRun | null => {
     if (!r) return null;
     const rr = runRoute(prepared.graph, r, tasksMin, closures, horizonMin, points);

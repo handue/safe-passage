@@ -6,6 +6,6 @@ export default defineConfig({
   plugins: [react()],
   server: {
     // Local API server (server/index.ts) handles outside data calls and caching.
-    proxy: { '/api': 'http://localhost:8787' },
+    proxy: { '/api': 'http://127.0.0.1:8787' },
   },
 })

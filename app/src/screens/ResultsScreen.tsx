@@ -14,6 +14,7 @@ import { Tag, fmtMin, fmtT } from '../ui/Tag';
 import { MapView } from '../ui/MapView';
 import { TimeBars, type TimeBar } from '../ui/TimeBars';
 import { fmtSpeed, fmtSquare, localizeMiles, minLong, unitsFor, type Units } from '../ui/units';
+import { SituationsSection } from './SituationsSection';
 import '../styles/results.css';
 
 // ---------- Helpers shared with the Fix screen ----------
@@ -327,6 +328,8 @@ export function ResultsScreen() {
           ariaLabel={mapLabel}
         />
 
+        <SituationsSection prepared={prepared} base={run} tasks={household.tasks} />
+
         <section className="how" aria-labelledby="how6">
           <div className="row between">
             <h2 id="how6">How this plan was made</h2>
@@ -342,11 +345,15 @@ export function ResultsScreen() {
             </div>
             <div>
               <Tag kind="est" />
-              <p>Minutes for each task at home.</p>
+              <p>Minutes for each task at home, and the values in each other situation (starting guesses you can change).</p>
             </div>
             <div>
               <Tag kind="ai" />
-              <p>Nothing on this screen. AI only words your plan.</p>
+              <p>
+                {state.situations.source === 'ai'
+                  ? 'Which other situations to test, and the one-line reason for each. It sets no times.'
+                  : 'Nothing on this screen. AI only words your plan.'}
+              </p>
             </div>
           </div>
           <p className="how-data">

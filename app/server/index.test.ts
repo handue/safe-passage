@@ -24,11 +24,19 @@ describe('server', () => {
   it('health, plan, 404 and bad input', async () => {
     const base = await serve(down, '/nonexistent/demo.json');
     expect(await (await fetch(`${base}/api/health`)).json()).toEqual({ ok: true });
-    expect((await fetch(`${base}/api/plan`, { method: 'POST', body: 'not json' })).status).toBe(400);
+    const json = { 'Content-Type': 'application/json' };
+    expect((await fetch(`${base}/api/plan`, { method: 'POST', headers: json, body: 'not json' })).status).toBe(400);
+    // Cross-site "simple" POSTs and other sites' pages cannot spend the model key.
+    for (const p of ['/api/plan', '/api/situations']) {
+      expect((await fetch(`${base}${p}`, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: '{}' })).status).toBe(415);
+      expect((await fetch(`${base}${p}`, { method: 'POST', headers: { ...json, Origin: 'https://evil.example' }, body: '{}' })).status).toBe(415);
+    }
+    expect((await fetch(`${base}/api/situations`, { method: 'POST', headers: { ...json, Origin: new URL(base).origin }, body: '{}' })).status).toBe(200);
+    expect((await fetch(`${base}/api/situations`, { method: 'POST', headers: { ...json, Origin: 'http://localhost:5173' }, body: '{}' })).status).toBe(200);
     const saved = process.env.MODEL_API_KEY;
     delete process.env.MODEL_API_KEY;
     try {
-      const plan = await fetch(`${base}/api/plan`, { method: 'POST', body: JSON.stringify({ household: { adults: 1 }, main: { roadNames: ['A Rd'], driveMin: 5, destination: 'D1 School' } }) });
+      const plan = await fetch(`${base}/api/plan`, { method: 'POST', headers: json, body: JSON.stringify({ household: { adults: 1 }, main: { roadNames: ['A Rd'], driveMin: 5, destination: 'D1 School' } }) });
       expect(plan.status).toBe(200);
       expect(((await plan.json()) as { source: string }).source).toBe('fallback');
     } finally {

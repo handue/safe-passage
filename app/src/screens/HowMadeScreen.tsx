@@ -50,6 +50,7 @@ export function HowMadeScreen() {
   const elev = find(f, 'Elevation:');
   const wind = find(f, 'Wind:');
   const planSource = plan.data?.source ?? null;
+  const sit = state.situations;
   const grid = prepared?.fireGrid;
   const none = area ? 'not used' : 'no address yet';
   const units = unitsFor(area?.country);
@@ -182,6 +183,25 @@ export function HowMadeScreen() {
                 </td>
                 <td className="muted">{planSource ? 'this session' : 'not used'}</td>
               </tr>
+              <tr>
+                <td>Other situations to test</td>
+                <td>
+                  Meta Model API, muse-spark-1.3, picks which situations fit your household from a fixed list and writes one line on why (fallback: fixed rules pick them).
+                  It gets household counts, task names and minutes, road names and the drill's times. No address or coordinates.
+                  <br />
+                  <b>
+                    {sit.status === 'idle'
+                      ? 'No situations yet.'
+                      : sit.status === 'loading'
+                        ? 'Fixed rules picked the current situations; the AI picks are on the way.'
+                        : sit.source === 'ai'
+                          ? 'The AI picked your current situations.'
+                          : 'Fixed rules picked your current situations: the AI did not answer.'}
+                  </b>{' '}
+                  {sit.status === 'ready' && sit.source === 'ai' && <Tag kind="ai" />}
+                </td>
+                <td className="muted">{sit.status === 'idle' ? 'not used' : 'this session'}</td>
+              </tr>
             </tbody>
           </table>
         </div>
@@ -214,6 +234,11 @@ export function HowMadeScreen() {
         </p>
         <p>
           <b>Time to spare:</b> the minute that point closes, minus time needed.
+        </p>
+        <p>
+          <b>Other situations:</b> the same simulated fire, with the day going differently (a late order, a blocked road, slow traffic and so on). No new fire is
+          simulated. The times and each next action's effect are calculated. The AI (muse-spark-1.3) only picks which situations to show and writes the one-line
+          reasons; without it, fixed rules pick them. The values in each situation, like how late the order comes, are starting guesses you can change.
         </p>
       </section>
 

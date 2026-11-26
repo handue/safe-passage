@@ -40,7 +40,7 @@ const clampInt = (n: unknown, max: number): number => {
   const v = Math.round(Number(n));
   return Number.isFinite(v) ? Math.min(Math.max(v, 0), max) : 0;
 };
-const cleanText = (s: unknown, max = 80): string => String(s ?? '').replace(/[\u0000-\u001f<>]/g, ' ').trim().slice(0, max);
+export const cleanText = (s: unknown, max = 80): string => String(s ?? '').replace(/[\u0000-\u001f<>]/g, ' ').trim().slice(0, max);
 
 const COMPASS_WORDS = ['north', 'northeast', 'east', 'southeast', 'south', 'southwest', 'west', 'northwest'];
 
@@ -223,23 +223,44 @@ function validOutput(o: any): o is Omit<PlanOutput, 'source'> {
     && Array.isArray(o.goBag) && o.goBag.every((x: unknown) => typeof x === 'string') && Array.isArray(o.thisWeek);
 }
 
-async function callModel(key: string, input: PlanInput, effort: string | null, signal: AbortSignal): Promise<Response> {
+/**
+ * One chat call to the Meta Model API with a strict JSON schema. Shared by the plan and situations writers.
+ * effort null leaves reasoning_effort out (used for the retry after a 400).
+ */
+export async function postModel(
+  key: string,
+  req: { system: string; user: string; schemaName: string; schema: unknown; maxTokens?: number },
+  effort: string | null,
+  signal: AbortSignal,
+  fetchImpl: typeof fetch = fetch,
+): Promise<Response> {
   const body: Record<string, unknown> = {
     model: PLAN_MODEL,
-    max_completion_tokens: 4000,
+    max_completion_tokens: req.maxTokens ?? 4000,
     messages: [
-      { role: 'system', content: SYSTEM },
-      { role: 'user', content: JSON.stringify(input) },
+      { role: 'system', content: req.system },
+      { role: 'user', content: req.user },
     ],
-    response_format: { type: 'json_schema', json_schema: { name: 'leaving_plan', strict: true, schema: SCHEMA } },
+    response_format: { type: 'json_schema', json_schema: { name: req.schemaName, strict: true, schema: req.schema } },
   };
   if (effort) body.reasoning_effort = effort;
-  return fetch(ENDPOINT, {
+  return fetchImpl(ENDPOINT, {
     method: 'POST',
     headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
     signal,
   });
+}
+
+/** Low reasoning effort keeps calls fast and cheap; retry once without it if the API rejects the value. */
+export async function postModelWithRetry(
+  key: string,
+  req: Parameters<typeof postModel>[1],
+  signal: AbortSignal,
+  fetchImpl: typeof fetch = fetch,
+): Promise<Response> {
+  const res = await postModel(key, req, 'low', signal, fetchImpl);
+  return res.status === 400 ? postModel(key, req, null, signal, fetchImpl) : res;
 }
 
 /**
@@ -257,9 +278,7 @@ export async function writePlan(
   if (opts.signal?.aborted) controller.abort();
   opts.signal?.addEventListener('abort', () => controller.abort(), { once: true });
   try {
-    // Low reasoning effort keeps this fast and cheap; retry once without it if the API rejects the value.
-    let res = await callModel(key, input, 'low', controller.signal);
-    if (res.status === 400) res = await callModel(key, input, null, controller.signal);
+    const res = await postModelWithRetry(key, { system: SYSTEM, user: JSON.stringify(input), schemaName: 'leaving_plan', schema: SCHEMA }, controller.signal);
     if (!res.ok) return fallbackPlan(input, `Model API returned ${res.status}`);
     const data: any = await res.json();
     const choice = data?.choices?.[0];

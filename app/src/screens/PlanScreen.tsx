@@ -12,6 +12,7 @@ import { Tag, fmtMin, fmtT } from '../ui/Tag';
 import { fmtDist, fmtSpeed, unitsFor } from '../ui/units';
 import { DISCLAIMER } from '../ui/Shell';
 import { dataSources, wayOutName } from './ResultsScreen';
+import { PlanSituations } from './SituationsSection';
 import '../styles/plan.css';
 
 const ONE_WAY_OUT_MIN_M = 200; // same threshold the drill uses for the "one way out" bottleneck
@@ -495,6 +496,13 @@ export function PlanScreen() {
           <p className="muted">No drill run yet. <a className="noprint" href="#/setup">Run a drill</a></p>
         )}
       </section>
+
+      {before && (
+        <section className="stack-s" aria-labelledby="p-sit">
+          <h2 id="p-sit">If the day goes differently</h2>
+          <PlanSituations />
+        </section>
+      )}
 
       <section className="how" aria-labelledby="how8">
         <div className="row between">

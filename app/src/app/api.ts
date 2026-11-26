@@ -67,6 +67,47 @@ export function requestPlan(body: PlanRequest, signal?: AbortSignal): Promise<Pl
   return getJson<PlanResponse>('/api/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal });
 }
 
+// ---------- Other situations, same fire (the AI only picks which ones) ----------
+
+/** What the situation picker gets: counts, task names and minutes, road names and the drill's times. No address or coordinates. */
+export interface SituationsRequest {
+  household: { adults: number; children: number; needHelpMoving: number; dogs: number; catsAndSmallPets: number; cars: number };
+  tasks: { id: string; label: string; minutes: number }[];
+  start: 'day' | 'night';
+  /** closeMin and marginMin are null when the fire never closed the main route. */
+  drill: {
+    roadName: string;
+    closeMin: number | null;
+    passMin: number;
+    marginMin: number | null;
+    outcome: 'never_closed' | 'in_time' | 'short';
+    backupRoadNames: string[];
+    mainRoadNames: string[];
+  };
+  available: { kind: string; minParam: number; maxParam: number; defaultParam: number; title: string }[];
+}
+
+export interface SituationsResponse {
+  situations: { kind: string; param: number; reason: string }[];
+  source: 'ai' | 'fallback';
+  note?: string;
+}
+
+/** Never throws: a network or server error reads as a fallback answer, so the fixed rules stay in use. */
+export async function requestSituations(body: SituationsRequest, signal?: AbortSignal): Promise<SituationsResponse> {
+  try {
+    const res = await getJson<SituationsResponse>('/api/situations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal,
+    });
+    return { situations: Array.isArray(res?.situations) ? res.situations : [], source: res?.source === 'ai' ? 'ai' : 'fallback', note: res?.note };
+  } catch {
+    return { situations: [], source: 'fallback', note: 'Could not reach the situation picker.' };
+  }
+}
+
 // ---------- Reference layer (real fires near home; never part of the drill) ----------
 
 export interface RefPerimeter {

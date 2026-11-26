@@ -11,24 +11,12 @@ import { TimeBars, type TimeBar } from '../ui/TimeBars';
 import type { PreparedArea } from '../engine/area';
 import { aDrive, capitalize, minShort, unitsFor } from '../ui/units';
 import { DemoChip, DrillProblem, ModelNotes, NavLink, barFor, destLabel, destinationFireText, endMin, fireCaptionFor, verdictOf, wayOutName, windText } from './ResultsScreen';
+import { changeText } from '../engine/situations';
+import { FixSituations } from './SituationsSection';
 import '../styles/results.css';
 import '../styles/fix.css';
 
-/** What the household can change for each task, in plain words. */
-const CHANGE_TEXT: Record<string, string> = {
-  pets: 'Keep pet carriers by the front door',
-  meds: 'Put medications in the go-bag',
-  docs: 'Keep documents and chargers in the go-bag',
-  gather: 'Agree on one meeting point inside the house',
-  help: 'Plan who helps whom ahead of time',
-  load: 'Pack the car the night before a red flag day',
-  ride: 'Arrange a ride with a neighbor ahead of time',
-};
-
-/** The change for a task, or null when there is none to offer. Tasks the user added get a generic row. */
-function changeText(t: Task): string | null {
-  return CHANGE_TEXT[t.id] ?? (t.id.startsWith('custom-') ? `Shorten: ${t.label}` : null);
-}
+// What the household can change for each task, in plain words: shared with the situations' next actions.
 
 const defaultTarget = (t: Task) => Math.max(1, Math.round(t.minutes / 3));
 const clampTarget = (n: number, t: Task) => Math.min(Math.max(1, Math.round(n)), Math.max(1, t.minutes));
@@ -219,6 +207,7 @@ export function FixScreen() {
             </>
           }
         />
+        <FixSituations />
         <ModelNotes run={focus} area={area} prepared={prepared} which="both" />
         {destFire && (
           <p className="res-dest-fire" role="status">

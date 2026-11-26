@@ -1,0 +1,66 @@
+/* Other situations, same fire (Results, Fix and Plan screens). Tokens come from theme.css. */
+.sit { display: flex; flex-direction: column; gap: var(--s3); container-type: inline-size; }
+.sit h2 { margin: 0; }
+.sit-head { margin: 0; font-size: var(--t-m); }
+.sit-head b { font-size: var(--t-l); }
+.sit-source { margin: 0; font-size: 14px; display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; }
+
+/* Desktop: one table row per situation, soft rules like the other lists. */
+.sit-wrap { min-width: 0; }
+.sit-table { width: 100%; border-collapse: collapse; font-size: 15px; }
+.sit-table th { font-size: 13px; white-space: nowrap; }
+.sit-table td { padding: var(--s3) var(--s3) var(--s3) 0; }
+.sit-table td:last-child, .sit-table th:last-child { padding-right: 0; }
+.sit-table .sit-what { width: 34%; }
+.sit-table .sit-road { width: 20%; }
+.sit-table .sit-result { width: 16%; }
+.sit-table .sit-next { width: 22%; }
+.sit-table td > span { display: block; }
+.sit-table td[data-label="Leaves home"] { white-space: nowrap; }
+.sit-title { display: block; font-size: 16px; }
+.sit-assume { margin: var(--s1) 0 0; color: var(--ink-2); line-height: 1.6; }
+/* Inline in the sentence: beats base.css's input[type=number] (44px) on desktop; touch keeps 44px below. */
+.sit input.sit-param { width: 60px; min-height: 30px; height: 30px; padding: 0 var(--s2); margin: 0 var(--s1); font-weight: 700; vertical-align: baseline; }
+.sit-origin { display: inline-flex; align-items: center; gap: var(--s1); font-size: 13px; color: var(--ink-2); white-space: nowrap; }
+.sit-reason { margin: var(--s1) 0 0; font-size: 13px; color: var(--ink-2); }
+.sit-reason-label { font-weight: 600; }
+.sit-num { font-weight: 700; display: inline !important; }
+.sit-route { font-size: 13px; color: var(--ink-2); }
+.sit-verdict { display: flex !important; gap: var(--s1); align-items: flex-start; }
+.sit-verdict .icon { width: 18px; height: 18px; flex: none; margin-top: 2px; }
+.sit-verdict.is-short, .sit-verdict.is-short .icon { color: var(--short); }
+.sit-verdict.is-spare, .sit-verdict.is-spare .icon { color: var(--spare); }
+.sit-verdict.is-none .icon { color: var(--short); }
+.sit-delta { font-size: 13px; color: var(--ink-2); margin-top: 2px; }
+.sit-action { font-weight: 600; }
+.sit-gain { margin-top: 2px; color: var(--ink-2); }
+
+/* Narrow: each situation becomes a card; the column name sits beside each value. */
+@container (max-width: 760px) {
+  .sit-table, .sit-table tbody, .sit-table tr, .sit-table td { display: block; width: auto !important; }
+  .sit-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .sit-table tbody { display: flex; flex-direction: column; gap: var(--s3); }
+  .sit-table tr { border: 1px solid var(--line-soft); border-radius: var(--r-lg, 16px); background: var(--panel); padding: var(--s3) var(--s4); }
+  .sit-table tr.sit-tone-short { border-color: var(--short); }
+  .sit-table td { border: 0; padding: var(--s1) 0; }
+  .sit-table td[data-label] { display: grid; grid-template-columns: 96px minmax(0, 1fr); column-gap: var(--s3); align-items: start; white-space: normal; }
+  .sit-table td[data-label]::before { content: attr(data-label); grid-row: 1 / span 3; font-size: 13px; color: var(--ink-2); font-weight: 600; padding-top: 1px; }
+  .sit-table td[data-label] > * { grid-column: 2; }
+  .sit-table td[data-label="Leaves home"] { grid-template-columns: 96px auto 1fr; }
+  .sit-table td[data-label="Leaves home"] > * { grid-column: auto; justify-self: start; }
+  .sit-what { padding-bottom: var(--s2) !important; }
+}
+
+/* Touch: the number inputs reach 44 px. */
+@media (pointer: coarse) { .sit input.sit-param { min-height: 44px; height: 44px; } }
+
+/* Fix screen line under the before/after cards. */
+.sit-compare { display: flex; flex-direction: column; gap: var(--s1); }
+.sit-compare p { margin: 0; }
+.sit-fails { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--s1); }
+.sit-fails li { display: flex; gap: var(--s2); align-items: flex-start; font-size: 14px; color: var(--ink-2); }
+.sit-fails li b { color: var(--ink); }
+.sit-fails .icon { width: 18px; height: 18px; flex: none; margin-top: 1px; color: var(--short); }
+
+/* Plan screen list (prints dark on white through plan.css's .plan-result rules). */
+.sit-plan { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--s2); }

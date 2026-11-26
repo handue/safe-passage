@@ -1,10 +1,12 @@
 // App state: one store for the whole flow, kept in memory (nothing personal is saved).
-import { createContext, useContext, useMemo, useReducer, type Dispatch, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useMemo, useReducer, type Dispatch, type ReactNode } from 'react';
 import type { AreaData, DrillSetup, Household, Route, StartTime, Task, WaysOut, Wind, XY } from '../engine/types';
 import { prepareArea, type PreparedArea } from '../engine/area';
 import { defaultTasks, runDrill, type DrillRun } from '../engine/drill';
 import { suggestIgnitions, type IgnitionSuggestion } from '../engine/ignition';
-import type { PlanResponse } from './api';
+import { requestSituations, type PlanResponse, type SituationsResponse } from './api';
+import { applicableKinds, clampParam, defaultSituations, type SituationKind, type SituationSpec } from '../engine/situations';
+import { buildSituationsRequest, situationsKey, specsFromResponse, withEditedParams, type EditedParams } from './situations';
 
 export type LoadStep = { label: string; state: 'done' | 'working' | 'waiting' };
 
@@ -44,6 +46,27 @@ export interface AppState {
   plan: { status: 'idle' | 'loading' | 'ready'; data: PlanResponse | null };
   meeting: { primary: string; ifClosed: string; contact: string };
   entry: Entry;
+  /** Other situations on the same fire: rules picks at once, AI picks when they arrive. */
+  situations: SituationsState;
+}
+
+export interface SituationsState {
+  /** Identifies the base drill (setup + tasks + household counts); '' when there is none. */
+  key: string;
+  /** loading: rules specs are shown and the AI picks are being asked for. */
+  status: 'idle' | 'loading' | 'ready';
+  specs: SituationSpec[];
+  source: 'ai' | 'rules';
+  note?: string;
+  /** Values the user typed, by kind. They win over the assumed value. */
+  editedParams: EditedParams;
+}
+
+export const NO_SITUATIONS: SituationsState = { key: '', status: 'idle', specs: [], source: 'rules', editedParams: {} };
+
+/** The specs to run: picks with the user's own values in place. */
+export function effectiveSpecs(s: SituationsState): SituationSpec[] {
+  return withEditedParams(s.specs, s.editedParams);
 }
 
 /** Fixed drill wind for the demo address ("Strong wind day" from the northeast), so the
@@ -78,6 +101,7 @@ export function initialState(): AppState {
     plan: { status: 'idle', data: null },
     meeting: { primary: '', ifClosed: '', contact: '' },
     entry: { query: '', choices: null, matched: null },
+    situations: NO_SITUATIONS,
   };
 }
 
@@ -94,6 +118,8 @@ export type Action =
   | { type: 'plan/done'; data: PlanResponse }
   | { type: 'meeting/set'; patch: Partial<AppState['meeting']> }
   | { type: 'entry/set'; patch: Partial<Entry> }
+  | { type: 'situations/done'; key: string; response: SituationsResponse }
+  | { type: 'situations/param'; kind: SituationKind; param: number }
   | { type: 'reset' };
 
 /** Route shape in local XY for drawing and for ignition suggestions. */
@@ -153,7 +179,7 @@ function reducer(s: AppState, a: Action): AppState {
     }
     case 'household/set':
       // Fixes belong to the drill they were tried on; a new household starts with none.
-      return { ...s, household: a.household, before: null, after: null, fixes: NO_FIXES, plan: { status: 'idle', data: null } };
+      return { ...s, household: a.household, before: null, after: null, fixes: NO_FIXES, plan: { status: 'idle', data: null }, situations: NO_SITUATIONS };
     case 'setup/set': {
       const setup = { ...s.setup, ...a.patch };
       const windChanged = a.patch.wind !== undefined;
@@ -164,7 +190,13 @@ function reducer(s: AppState, a: Action): AppState {
       if (!s.prepared || !s.setup.ignition) return s;
       const setup: DrillSetup = { ignition: s.setup.ignition, wind: s.setup.wind, start: s.setup.start, seed: s.setup.seed };
       const before = runDrill(s.prepared, s.household.tasks, setup);
-      const next = { ...s, before, after: null, fixes: NO_FIXES, plan: { status: 'idle' as const, data: null } };
+      // Rules picks show at once; the AI picks are asked for in the background (AppProvider).
+      const key = situationsKey(setup, s.household.tasks, s.household);
+      const situations: SituationsState =
+        s.situations.key === key && s.situations.status !== 'idle'
+          ? s.situations
+          : { key, status: 'loading', specs: defaultSituations(s.household, s.prepared, before), source: 'rules', editedParams: {} };
+      const next = { ...s, before, after: null, fixes: NO_FIXES, plan: { status: 'idle' as const, data: null }, situations };
       return next;
     }
     case 'fixes/set': {
@@ -183,6 +215,17 @@ function reducer(s: AppState, a: Action): AppState {
       return { ...s, meeting: { ...s.meeting, ...a.patch } };
     case 'entry/set':
       return { ...s, entry: { ...s.entry, ...a.patch } };
+    case 'situations/done': {
+      if (a.key !== s.situations.key || !s.prepared || !s.before) return s;
+      const rules = defaultSituations(s.household, s.prepared, s.before);
+      const picked = specsFromResponse(a.response, applicableKinds(s.household, s.prepared, s.before), rules);
+      return { ...s, situations: { ...s.situations, status: 'ready', ...picked } };
+    }
+    case 'situations/param': {
+      if (!Number.isFinite(a.param)) return s;
+      const editedParams = { ...s.situations.editedParams, [a.kind]: clampParam(a.kind, a.param) };
+      return { ...s, situations: { ...s.situations, editedParams } };
+    }
     case 'reset':
       // A fresh drill, but the typed address stays so the user can come back to it.
       return { ...initialState(), entry: s.entry };
@@ -191,8 +234,34 @@ function reducer(s: AppState, a: Action): AppState {
 
 const Ctx = createContext<{ state: AppState; dispatch: Dispatch<Action> } | null>(null);
 
+// Situation request bookkeeping kept outside React so StrictMode remounts do not send a second request.
+let sitInflightKey: string | null = null;
+let sitAbort: AbortController | null = null;
+
+/** Asks the AI to pick situations once per base drill; the rules picks stay until (and unless) it answers. */
+function useSituationPicks(state: AppState, dispatch: Dispatch<Action>): void {
+  const { key, status } = state.situations;
+  const { prepared, before, household } = state;
+  useEffect(() => {
+    if (status !== 'loading' || !key || !prepared || !before) return;
+    if (sitInflightKey === key) return;
+    sitAbort?.abort(); // picks for an older drill are no longer wanted
+    const controller = new AbortController();
+    sitAbort = controller;
+    sitInflightKey = key;
+    const body = buildSituationsRequest(household, household.tasks, before, applicableKinds(household, prepared, before));
+    void requestSituations(body, controller.signal).then((response) => {
+      if (sitInflightKey !== key) return;
+      sitInflightKey = null;
+      sitAbort = null;
+      dispatch({ type: 'situations/done', key, response });
+    });
+  }, [key, status, prepared, before, household, dispatch]);
+}
+
 export function AppProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, undefined, initialState);
+  useSituationPicks(state, dispatch);
   const value = useMemo(() => ({ state, dispatch }), [state]);
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
