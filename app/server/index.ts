@@ -9,6 +9,7 @@ import type { AreaData } from '../src/engine/types.ts';
 import { buildArea, geocode, GeocodeRejectedError, newProgress, RoadsUnavailableError, type AreaProgress, type SourceContext } from './sources.ts';
 import { sanitizePlanInput, writePlan } from './plan.ts';
 import { pickSituations, sanitizeSituationsInput } from './situations.ts';
+import { interpretSituation, sanitizeInterpretInput } from './interpret.ts';
 import { fetchReference, type ReferenceOptions } from './reference.ts';
 
 export const DEFAULT_DEMO_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'demo-area.json');
@@ -200,7 +201,7 @@ export async function handleRequest(req: IncomingMessage, res: ServerResponse, o
     } else if (req.method === 'GET' && url.pathname === '/api/area') {
       await handleArea(url, res, opts);
     } else if (req.method === 'POST' && !isSameSiteJsonPost(req)) {
-      // Both POST routes spend the model key. A cross-site "simple" POST (text/plain, no preflight)
+      // Every POST route spends the model key. A cross-site "simple" POST (text/plain, no preflight)
       // or a request from another site's page is refused before the body is read.
       sendJson(res, 415, { error: 'json_from_this_site_only' });
     } else if (req.method === 'POST' && url.pathname === '/api/plan') {
@@ -229,6 +230,21 @@ export async function handleRequest(req: IncomingMessage, res: ServerResponse, o
         });
         const out = await pickSituations(sanitizeSituationsInput(body), { signal: controller.signal });
         if (out.note) console.log(`situations: fallback (${out.note})`);
+        if (!controller.signal.aborted) sendJson(res, 200, out);
+      }
+    } else if (req.method === 'POST' && url.pathname === '/api/interpret-situation') {
+      const body = await readJsonBody(req, 64 * 1024);
+      const input = body === null ? null : sanitizeInterpretInput(body);
+      if (!input || !input.text) {
+        sendJson(res, 400, { error: 'bad_body' });
+      } else {
+        // Stop the model call when the browser closes the request.
+        const controller = new AbortController();
+        res.on('close', () => {
+          if (!res.writableFinished) controller.abort();
+        });
+        const out = await interpretSituation(input, { signal: controller.signal });
+        if (out.note) console.log(`interpret-situation: fallback (${out.note})`);
         if (!controller.signal.aborted) sendJson(res, 200, out);
       }
     } else {

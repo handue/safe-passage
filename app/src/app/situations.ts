@@ -3,8 +3,22 @@
 // answer becomes the specs the engine runs. No React, no fetch.
 import type { DrillRun, HouseholdCounts, PreparedForDrill } from '../engine/drill';
 import type { DrillSetup, Task } from '../engine/types';
-import { SITUATIONS, clampParam, runSituations, type SituationKind, type SituationResult, type SituationSpec } from '../engine/situations';
-import type { SituationsRequest, SituationsResponse } from './api';
+import {
+  SITUATIONS,
+  clampParam,
+  emptyParts,
+  runCustomSituation,
+  rebaseCustomParts,
+  runSituations,
+  sanitizeCustomParts,
+  withoutNumbers,
+  type CustomParts,
+  type CustomSituation,
+  type SituationKind,
+  type SituationResult,
+  type SituationSpec,
+} from '../engine/situations';
+import type { InterpretRequest, InterpretResponse, SituationsRequest, SituationsResponse } from './api';
 
 const MAX_TASKS = 20;
 const MAX_LABEL = 60;
@@ -93,6 +107,138 @@ export function withEditedParams(specs: SituationSpec[], edited: EditedParams): 
     const p = edited[s.kind];
     return p === undefined ? s : { ...s, param: clampParam(s.kind, p) };
   });
+}
+
+// ---------- Describe your own situation ----------
+
+export const MAX_CUSTOM = 5;
+export const MAX_SITUATION_TEXT = 200;
+const MAX_TITLE = 50;
+
+/** The typed text as it is sent and shown: spaces collapsed, trimmed, at most 200 characters. */
+export function cleanSituationText(s: string): string {
+  return s.replace(/\s+/g, ' ').trim().slice(0, MAX_SITUATION_TEXT).trim();
+}
+
+/** A title from the typed text when the AI gave none: no digits, at most 40 characters. */
+export function fallbackTitle(text: string): string {
+  const t = cleanSituationText(text).replace(/\d+/g, '').replace(/\s+/g, ' ').trim().slice(0, 40).trim();
+  return t || 'Your situation';
+}
+
+/** Body for the situation reader: the text, counts, task names and minutes, and the kinds it may use. Never the address or coordinates. */
+export function buildInterpretRequest(text: string, h: HouseholdCounts, tasks: Task[], available: SituationKind[]): InterpretRequest {
+  return {
+    text: cleanSituationText(text),
+    household: {
+      adults: h.adults,
+      children: h.children,
+      needHelpMoving: h.needHelpMoving,
+      dogs: h.dogs,
+      catsAndSmallPets: h.catsAndSmallPets,
+      cars: h.cars,
+    },
+    // Task ids stay so the reader can change a task's minutes; names the user typed are not sent.
+    tasks: tasks.slice(0, MAX_TASKS).map((t) => ({ id: t.id, label: pickerLabel(t), minutes: round(t.minutes) })),
+    available: available.map((kind) => {
+      const info = SITUATIONS[kind];
+      return { kind, title: info.title, minParam: info.minParam, maxParam: info.maxParam, defaultParam: info.defaultParam };
+    }),
+  };
+}
+
+/** A custom situation before the user adds it: shown as the interpretation card. */
+export interface CustomDraft {
+  text: string;
+  title: string;
+  titleSource: 'ai' | 'user';
+  parts: CustomParts;
+  cannotModel: string;
+  partsEdited?: boolean;
+}
+
+/** What the reader's answer means for the screen. Parts are sanitized by the engine; nothing usable reads as unmeasurable. */
+export function draftFromResponse(
+  res: InterpretResponse,
+  text: string,
+  tasks: Task[],
+): { kind: 'card'; draft: CustomDraft } | { kind: 'unmeasurable'; cannotModel: string } | { kind: 'fallback'; note?: string } {
+  if (res.status === 'fallback') return { kind: 'fallback', note: res.note };
+  // AI text the user cannot edit: no numbers in it (only the engine shows numbers).
+  const cannotModel = typeof res.cannotModel === 'string' ? withoutNumbers(res.cannotModel).slice(0, 140).trim() : '';
+  const parts = sanitizeCustomParts(res.parts, tasks);
+  if (res.status !== 'ok' || emptyParts(parts)) return { kind: 'unmeasurable', cannotModel };
+  const aiTitle = typeof res.title === 'string' ? res.title.replace(/\d+/g, '').replace(/\s+/g, ' ').trim().slice(0, MAX_TITLE) : '';
+  const clean = cleanSituationText(text);
+  // A title made from the user's own words is not AI-written.
+  const own = !aiTitle || res.titleFromText === true;
+  return {
+    kind: 'card',
+    draft: { text: clean, title: aiTitle || fallbackTitle(clean), titleSource: own ? 'user' : 'ai', parts, cannotModel },
+  };
+}
+
+let customSeq = 0;
+
+/** A fresh id for a custom row. */
+export function newCustomId(): string {
+  customSeq += 1;
+  return `own-${customSeq}`;
+}
+
+/** A custom row from a draft: the title falls back to the text when left empty. */
+export function customFromDraft(d: CustomDraft, id: string = newCustomId()): CustomSituation {
+  const title = d.title.trim().slice(0, MAX_TITLE) || fallbackTitle(d.text);
+  return { id, text: d.text, title, parts: d.parts, titleSource: d.titleSource, ...(d.partsEdited ? { partsEdited: true } : {}) };
+}
+
+/** A custom row picked from the list, with the kind's starting value. */
+export function customFromPick(kind: SituationKind, id: string = newCustomId()): CustomSituation {
+  const info = SITUATIONS[kind];
+  return {
+    id,
+    text: '',
+    title: info.title,
+    titleSource: 'user',
+    parts: { situations: [{ kind, param: info.defaultParam }], addTasks: [], taskMinutes: {} },
+  };
+}
+
+/** Catalog kinds the user may still pick: ones that can apply here and are not in the table yet. */
+export function pickableKinds(applicable: SituationKind[], shown: SituationSpec[], custom: CustomSituation[]): SituationKind[] {
+  const used = new Set<string>(shown.map((s) => s.kind));
+  for (const c of custom) if (c.parts.situations.length === 1 && c.parts.addTasks.length === 0 && Object.keys(c.parts.taskMinutes).length === 0) used.add(c.parts.situations[0].kind);
+  return applicable.filter((k) => !used.has(k));
+}
+
+/** Runs the custom rows on the same fire. Never throws for the screens. */
+export function safeRunCustom(prepared: PreparedForDrill | null, base: DrillRun | null, tasks: Task[], custom: CustomSituation[]): SituationResult[] {
+  if (!prepared || !base || custom.length === 0) return [];
+  const out: SituationResult[] = [];
+  for (const c of custom) {
+    try {
+      out.push(runCustomSituation(prepared, base, tasks, c));
+    } catch (e) {
+      console.error('runCustomSituation failed', e);
+    }
+  }
+  return out;
+}
+
+/**
+ * Custom rows on a changed task list (Fix screen): a typed task change is rebased onto the fixed
+ * task, so a Fix to that same task still counts (see rebaseCustomParts).
+ */
+export function rebaseCustom(custom: CustomSituation[], baseTasks: Task[], nowTasks: Task[]): CustomSituation[] {
+  return custom.map((c) => {
+    const parts = rebaseCustomParts(c.parts, baseTasks, nowTasks);
+    return parts === c.parts ? c : { ...c, parts };
+  });
+}
+
+/** Stable React key for any row. */
+export function rowKey(r: SituationResult): string {
+  return r.custom ? r.custom.id : r.spec.kind;
 }
 
 /** Runs the situations, or none when there is no base run. Never throws for the screens. */

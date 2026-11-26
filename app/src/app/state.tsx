@@ -5,8 +5,8 @@ import { prepareArea, type PreparedArea } from '../engine/area';
 import { defaultTasks, runDrill, type DrillRun } from '../engine/drill';
 import { suggestIgnitions, type IgnitionSuggestion } from '../engine/ignition';
 import { requestSituations, type PlanResponse, type SituationsResponse } from './api';
-import { applicableKinds, clampParam, defaultSituations, type SituationKind, type SituationSpec } from '../engine/situations';
-import { buildSituationsRequest, situationsKey, specsFromResponse, withEditedParams, type EditedParams } from './situations';
+import { applicableKinds, clampParam, defaultSituations, emptyParts, sanitizeCustomParts, type CustomParts, type CustomSituation, type SituationKind, type SituationSpec } from '../engine/situations';
+import { MAX_CUSTOM, buildSituationsRequest, situationsKey, specsFromResponse, withEditedParams, type EditedParams } from './situations';
 
 export type LoadStep = { label: string; state: 'done' | 'working' | 'waiting' };
 
@@ -48,6 +48,8 @@ export interface AppState {
   entry: Entry;
   /** Other situations on the same fire: rules picks at once, AI picks when they arrive. */
   situations: SituationsState;
+  /** Situations the user described or picked, for the current drill (same key as situations). At most 5. */
+  customSituations: CustomSituation[];
 }
 
 export interface SituationsState {
@@ -102,6 +104,7 @@ export function initialState(): AppState {
     meeting: { primary: '', ifClosed: '', contact: '' },
     entry: { query: '', choices: null, matched: null },
     situations: NO_SITUATIONS,
+    customSituations: [],
   };
 }
 
@@ -120,6 +123,9 @@ export type Action =
   | { type: 'entry/set'; patch: Partial<Entry> }
   | { type: 'situations/done'; key: string; response: SituationsResponse }
   | { type: 'situations/param'; kind: SituationKind; param: number }
+  | { type: 'custom/add'; custom: CustomSituation }
+  | { type: 'custom/edit'; id: string; parts?: CustomParts; title?: string; titleSource?: 'ai' | 'user'; partsEdited?: boolean }
+  | { type: 'custom/remove'; id: string }
   | { type: 'reset' };
 
 /** Route shape in local XY for drawing and for ignition suggestions. */
@@ -179,7 +185,7 @@ function reducer(s: AppState, a: Action): AppState {
     }
     case 'household/set':
       // Fixes belong to the drill they were tried on; a new household starts with none.
-      return { ...s, household: a.household, before: null, after: null, fixes: NO_FIXES, plan: { status: 'idle', data: null }, situations: NO_SITUATIONS };
+      return { ...s, household: a.household, before: null, after: null, fixes: NO_FIXES, plan: { status: 'idle', data: null }, situations: NO_SITUATIONS, customSituations: [] };
     case 'setup/set': {
       const setup = { ...s.setup, ...a.patch };
       const windChanged = a.patch.wind !== undefined;
@@ -196,7 +202,8 @@ function reducer(s: AppState, a: Action): AppState {
         s.situations.key === key && s.situations.status !== 'idle'
           ? s.situations
           : { key, status: 'loading', specs: defaultSituations(s.household, s.prepared, before), source: 'rules', editedParams: {} };
-      const next = { ...s, before, after: null, fixes: NO_FIXES, plan: { status: 'idle' as const, data: null }, situations };
+      const customSituations = situations === s.situations ? s.customSituations : [];
+      const next = { ...s, before, after: null, fixes: NO_FIXES, plan: { status: 'idle' as const, data: null }, situations, customSituations };
       return next;
     }
     case 'fixes/set': {
@@ -226,6 +233,25 @@ function reducer(s: AppState, a: Action): AppState {
       const editedParams = { ...s.situations.editedParams, [a.kind]: clampParam(a.kind, a.param) };
       return { ...s, situations: { ...s.situations, editedParams } };
     }
+    case 'custom/add': {
+      if (s.customSituations.length >= MAX_CUSTOM || s.customSituations.some((c) => c.id === a.custom.id)) return s;
+      const parts = sanitizeCustomParts(a.custom.parts, s.household.tasks);
+      if (emptyParts(parts)) return s;
+      return { ...s, customSituations: [...s.customSituations, { ...a.custom, parts }] };
+    }
+    case 'custom/edit': {
+      const customSituations = s.customSituations.map((c) => {
+        if (c.id !== a.id) return c;
+        const parts = a.parts ? sanitizeCustomParts(a.parts, s.household.tasks) : c.parts;
+        if (emptyParts(parts)) return c;
+        const title = a.title !== undefined && a.title.trim() ? a.title.trim().slice(0, 50) : c.title;
+        const partsEdited = a.partsEdited || c.partsEdited;
+        return { ...c, parts, title, titleSource: a.titleSource ?? c.titleSource, ...(partsEdited ? { partsEdited: true } : {}) };
+      });
+      return { ...s, customSituations };
+    }
+    case 'custom/remove':
+      return { ...s, customSituations: s.customSituations.filter((c) => c.id !== a.id) };
     case 'reset':
       // A fresh drill, but the typed address stays so the user can come back to it.
       return { ...initialState(), entry: s.entry };

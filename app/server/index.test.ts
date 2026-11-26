@@ -27,7 +27,7 @@ describe('server', () => {
     const json = { 'Content-Type': 'application/json' };
     expect((await fetch(`${base}/api/plan`, { method: 'POST', headers: json, body: 'not json' })).status).toBe(400);
     // Cross-site "simple" POSTs and other sites' pages cannot spend the model key.
-    for (const p of ['/api/plan', '/api/situations']) {
+    for (const p of ['/api/plan', '/api/situations', '/api/interpret-situation']) {
       expect((await fetch(`${base}${p}`, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: '{}' })).status).toBe(415);
       expect((await fetch(`${base}${p}`, { method: 'POST', headers: { ...json, Origin: 'https://evil.example' }, body: '{}' })).status).toBe(415);
     }
@@ -36,6 +36,12 @@ describe('server', () => {
     const saved = process.env.MODEL_API_KEY;
     delete process.env.MODEL_API_KEY;
     try {
+      // Typed situation: JSON from this site gets 200 (fallback without a key); empty text or bad JSON is 400.
+      const interp = await fetch(`${base}/api/interpret-situation`, { method: 'POST', headers: { ...json, Origin: 'http://localhost:5173' }, body: JSON.stringify({ text: 'My partner has the car' }) });
+      expect(interp.status).toBe(200);
+      expect(await interp.json()).toEqual({ status: 'fallback', title: '', parts: { situations: [], addTasks: [], taskMinutes: {} }, cannotModel: '', note: 'No MODEL_API_KEY set' });
+      expect((await fetch(`${base}/api/interpret-situation`, { method: 'POST', headers: json, body: JSON.stringify({ text: '   ' }) })).status).toBe(400);
+      expect((await fetch(`${base}/api/interpret-situation`, { method: 'POST', headers: json, body: 'not json' })).status).toBe(400);
       const plan = await fetch(`${base}/api/plan`, { method: 'POST', headers: json, body: JSON.stringify({ household: { adults: 1 }, main: { roadNames: ['A Rd'], driveMin: 5, destination: 'D1 School' } }) });
       expect(plan.status).toBe(200);
       expect(((await plan.json()) as { source: string }).source).toBe('fallback');

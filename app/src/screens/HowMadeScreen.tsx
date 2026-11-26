@@ -239,6 +239,8 @@ export function HowMadeScreen() {
           <b>Other situations:</b> the same simulated fire, with the day going differently (a late order, a blocked road, slow traffic and so on). No new fire is
           simulated. The times and each next action's effect are calculated. The AI (muse-spark-1.3) only picks which situations to show and writes the one-line
           reasons; without it, fixed rules pick them. The values in each situation, like how late the order comes, are starting guesses you can change.
+          A situation you type is sent to the AI only to turn it into the drill's levers (a listed situation, an added task or changed task minutes). The times
+          are calculated, and you check every value before it is added.
         </p>
       </section>
 

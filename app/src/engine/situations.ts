@@ -137,7 +137,7 @@ export const CHANGE_TEXT: Record<string, string> = {
 
 /** The change for a task, or null when there is none to offer. Tasks the user added get a generic row. */
 export function changeText(t: Pick<Task, 'id' | 'label'>): string | null {
-  return CHANGE_TEXT[t.id] ?? (t.id.startsWith('custom-') ? `Shorten: ${t.label}` : null);
+  return CHANGE_TEXT[t.id] ?? (t.id.startsWith('custom-') || t.id.startsWith('added-') ? `Shorten: ${t.label}` : null);
 }
 
 /** Main route edges whose road segment is not on the backup (both directions compared). */
@@ -203,6 +203,8 @@ export interface SituationResult {
   marginMin: number | null;
   deltaMin: number | null;
   nextAction: NextAction | null;
+  /** Set on rows the household typed ("Your situation"); then spec/info kind is only a type filler. */
+  custom?: CustomSituation;
 }
 
 // ---------- Running one scenario on the fixed fire ----------
@@ -335,96 +337,296 @@ function blockedText(prepared: PreparedForDrill): string {
   return `${head} is blocked from the start${tail}`;
 }
 
-// ---------- Situations ----------
+// ---------- Effects: one code path for catalog rows and custom rows ----------
 
 const ALONE_TASKS = new Set(['gather', 'help', 'pets', 'load']);
 const PETS_LABEL = 'Find pet carriers and pets';
 
-function build(
-  ctx: Ctx,
-  spec: SituationSpec,
-  tasks: Task[],
-): { info: SituationInfo; scenario: Scenario; candidates: Candidate[] } {
-  const p = spec.param;
-  const baseWake = ctx.base.setup.start === 'night' ? NIGHT_WAKE_MIN : 0;
-  const sc: Scenario = { tasks, wakeMin: baseWake, delayMin: 0, route: 'main', driveScale: 1 };
-  let info = SITUATIONS[spec.kind];
+/** The fixed order effects stack in, whatever order the parts were given in. */
+const STACK_ORDER: SituationKind[] = ['pet_hides', 'no_car', 'adult_away', 'night', 'late_order', 'slow_traffic', 'road_blocked'];
+
+/** Task changes first: changed minutes (0 removes the task), then added tasks at the end. */
+function applyTaskChanges(tasks: Task[], parts: CustomParts): Task[] {
+  const out: Task[] = [];
+  for (const t of tasks) {
+    const m = Object.hasOwn(parts.taskMinutes, t.id) ? parts.taskMinutes[t.id] : t.minutes;
+    if (m > 0) out.push(m === t.minutes ? t : { ...t, minutes: m });
+  }
+  parts.addTasks.forEach((a, i) => out.push({ id: addedTaskId(tasks, i), label: a.label, minutes: a.minutes, source: 'estimate' }));
+  return out;
+}
+
+/** Id for the i-th added task: "added-1", "added-2"..., skipping ids the household already uses. */
+function addedTaskId(tasks: Task[], i: number): string {
+  const used = new Set(tasks.map((t) => t.id));
+  let n = 0;
+  let id = '';
+  for (let k = 0; k <= i; k++) {
+    do id = `added-${++n}`;
+    while (used.has(id));
+  }
+  return id;
+}
+
+/**
+ * Stacks the kinds' effects on the (already changed) task list in STACK_ORDER. `petsMin` replaces
+ * the pet_hides step's "original + extra" with a given value, so an action on the pets task is measured
+ * BEFORE later steps (adult_away) multiply it, the same as the situation itself.
+ */
+function stack(ctx: Ctx, param: Map<SituationKind, number>, changed: Task[], petsMin?: number): Scenario {
+  const sc: Scenario = {
+    tasks: changed,
+    wakeMin: ctx.base.setup.start === 'night' ? NIGHT_WAKE_MIN : 0,
+    delayMin: 0,
+    route: 'main',
+    driveScale: 1,
+  };
+  for (const kind of STACK_ORDER) {
+    const p = param.get(kind);
+    if (p === undefined) continue;
+    switch (kind) {
+      case 'pet_hides': {
+        const pets = sc.tasks.find((t) => t.id === 'pets');
+        const m = petsMin ?? (pets?.minutes ?? 0) + p;
+        sc.tasks = pets ? setTask(sc.tasks, 'pets', m) : [...sc.tasks, { id: 'pets', label: PETS_LABEL, minutes: m, source: 'estimate' }];
+        break;
+      }
+      case 'no_car': {
+        const ride: Task = { id: 'ride', label: 'Reach a ride', minutes: p, source: 'estimate' };
+        sc.tasks = [...sc.tasks.filter((t) => t.id !== 'ride'), ride];
+        break;
+      }
+      case 'adult_away':
+        // Rounded up so a longer task never reads as unchanged.
+        sc.tasks = sc.tasks.map((t) => (ALONE_TASKS.has(t.id) ? { ...t, minutes: Math.ceil(t.minutes * p - 1e-9) } : t));
+        break;
+      case 'night':
+        sc.wakeMin = p;
+        break;
+      case 'late_order':
+        sc.delayMin = p;
+        break;
+      case 'slow_traffic':
+        sc.driveScale = p;
+        break;
+      case 'road_blocked':
+        sc.route = 'backup';
+        break;
+    }
+  }
+  return sc;
+}
+
+/**
+ * Applies every part on the same fire and lists the actions to measure. Effects stack in a fixed order:
+ * task changes, then pet_hides / no_car / adult_away task effects, night wake, late_order delay,
+ * slow_traffic multiplier, road_blocked -> backup. `generic` adds the custom-row actions
+ * (shorten the slowest task, switch route) on top of each kind's own action.
+ */
+function applyEffects(ctx: Ctx, parts: CustomParts, tasks: Task[], generic: boolean): { scenario: Scenario; candidates: Candidate[] } {
+  const param = new Map(parts.situations.map((s) => [s.kind, s.param]));
+  const changed = applyTaskChanges(tasks, parts);
+  const petsOriginal = changed.find((t) => t.id === 'pets')?.minutes ?? 0;
+  const sc = stack(ctx, param, changed);
   const candidates: Candidate[] = [];
   const add = (c: Candidate | null) => {
     if (c) candidates.push(c);
   };
+  const { backup, main } = ctx.prepared.waysOut;
+  const switchBackup = (): Candidate | null =>
+    sc.route === 'main' && backup
+      ? {
+          id: 'switch_backup',
+          text: `Take the backup route on ${firstOwnRoad(ctx.prepared, backup.edgeIds, main) || 'the other road'}`,
+          tag: 'calc',
+          scenario: { ...sc, route: 'backup' },
+        }
+      : null;
 
-  switch (spec.kind) {
-    case 'night': {
-      sc.wakeMin = p;
-      add(shortenSlowest(sc, { night: true }));
-      break;
-    }
-    case 'late_order': {
-      sc.delayMin = p;
-      add({ id: 'leave_on_warning', text: 'Leave when a warning is issued, not when the order comes', tag: 'calc', scenario: { ...sc, delayMin: 0 } });
-      break;
-    }
-    case 'adult_away': {
-      // Rounded up so a longer task never reads as unchanged.
-      sc.tasks = tasks.map((t) => (ALONE_TASKS.has(t.id) ? { ...t, minutes: Math.ceil(t.minutes * p - 1e-9) } : t));
-      add(shortenSlowest(sc, { only: ALONE_TASKS }));
-      break;
-    }
-    case 'no_car': {
-      const ride: Task = { id: 'ride', label: 'Reach a ride', minutes: p, source: 'estimate' };
-      sc.tasks = [...tasks.filter((t) => t.id !== 'ride'), ride];
-      add({
-        id: 'shorten:ride',
-        text: CHANGE_TEXT.ride,
-        tag: 'est',
-        scenario: { ...sc, tasks: setTask(sc.tasks, 'ride', Math.max(1, Math.round(p / 3))) },
-      });
-      break;
-    }
-    case 'slow_traffic': {
-      sc.driveScale = p;
-      const { backup } = ctx.prepared.waysOut;
-      const switched: Candidate | null = backup
-        ? {
-            id: 'switch_backup',
-            text: `Take the backup route on ${firstOwnRoad(ctx.prepared, backup.edgeIds, ctx.prepared.waysOut.main) || 'the other road'}`,
-            tag: 'calc',
-            scenario: { ...sc, route: 'backup' },
-          }
-        : null;
-      // Switch only when it does better under the same slowdown; otherwise shorten the slowest task.
-      const now = evaluate(ctx, sc).run;
-      const alt = switched ? evaluate(ctx, switched.scenario).run : null;
-      if (switched && now && alt && diff(marginOf(alt), marginOf(now)) > 0) add(switched);
-      else add(shortenSlowest(sc));
-      break;
-    }
-    case 'road_blocked': {
-      sc.route = 'backup';
-      const text = blockedText(ctx.prepared);
-      if (text) info = { ...info, assumption: () => text };
-      add(shortenSlowest(sc));
-      break;
-    }
-    case 'pet_hides': {
-      const pets = tasks.find((t) => t.id === 'pets');
-      const original = pets?.minutes ?? 0;
-      sc.tasks = pets
-        ? setTask(tasks, 'pets', original + p)
-        : [...tasks, { id: 'pets', label: PETS_LABEL, minutes: p, source: 'estimate' }];
-      add({
-        id: 'pets_inside',
-        text: 'Keep pets inside on red flag days, carriers by the door',
-        tag: 'est',
-        scenario: { ...sc, tasks: setTask(sc.tasks, 'pets', Math.max(1, Math.round(original / 3))) },
-      });
-      break;
+  for (const { kind, param: p } of parts.situations) {
+    switch (kind) {
+      case 'night':
+        add(shortenSlowest(sc, { night: true }));
+        break;
+      case 'late_order':
+        add({ id: 'leave_on_warning', text: 'Leave when a warning is issued, not when the order comes', tag: 'calc', scenario: { ...sc, delayMin: 0 } });
+        break;
+      case 'adult_away':
+        add(shortenSlowest(sc, { only: ALONE_TASKS }));
+        break;
+      case 'no_car':
+        add({
+          id: 'shorten:ride',
+          text: CHANGE_TEXT.ride,
+          tag: 'est',
+          scenario: { ...sc, tasks: setTask(sc.tasks, 'ride', Math.max(1, Math.round(p / 3))) },
+        });
+        break;
+      case 'slow_traffic': {
+        // Switch only when it does better under the same slowdown; otherwise shorten the slowest task.
+        const switched = switchBackup();
+        const now = switched ? evaluate(ctx, sc).run : null;
+        const alt = switched ? evaluate(ctx, switched.scenario).run : null;
+        if (switched && now && alt && diff(marginOf(alt), marginOf(now)) > 0) add(switched);
+        else add(shortenSlowest(sc));
+        break;
+      }
+      case 'road_blocked':
+        add(shortenSlowest(sc));
+        break;
+      case 'pet_hides':
+        add({
+          id: 'pets_inside',
+          text: 'Keep pets inside on red flag days, carriers by the door',
+          tag: 'est',
+          // Re-stacked with the pets task shortened first, so a later multiplier (adult_away) still applies.
+          scenario: stack(ctx, param, changed, Math.max(1, Math.round(petsOriginal / 3))),
+        });
+        break;
     }
   }
-  return { info, scenario: sc, candidates };
+  if (generic) {
+    add(shortenSlowest(sc));
+    add(switchBackup()); // kept only when it helps: bestAction drops actions with no gain
+  }
+  return { scenario: sc, candidates };
 }
 
+// ---------- Custom situations (typed by the household, turned into parts) ----------
+
+export interface CustomParts {
+  /** Any of the 7 kinds, each at most once, params clamped with clampParam; road_blocked has param 0. */
+  situations: { kind: SituationKind; param: number }[];
+  /** New tasks, minutes 1..60 (whole), label at most 60 characters, at most 3. */
+  addTasks: { label: string; minutes: number }[];
+  /** Existing task id -> new minutes 0..60 (0 = task removed). */
+  taskMinutes: Record<string, number>;
+}
+
+export interface CustomSituation {
+  id: string;
+  text: string;
+  title: string;
+  parts: CustomParts;
+  titleSource: 'ai' | 'user';
+  /** True once the user changed any value; the row then says "your values" instead of "starting guesses". */
+  partsEdited?: boolean;
+}
+
+/**
+ * Text the AI wrote that the user cannot edit carries no numbers the engine did not calculate:
+ * numbers (with a unit word after them) are taken out, e.g. "Drive 20 miles to the barn" -> "Drive to the barn".
+ */
+export function withoutNumbers(s: string): string {
+  return s
+    .replace(/\[removed\]/gi, ' ')
+    .replace(/\d+(?:[.,:]\d+)*\s*(?:%|minutes?|mins?|miles?|mi|km|hours?|hrs?|h|times|x)?(?![A-Za-z])/gi, ' ')
+    .replace(/\d/g, '')
+    .replace(/\s+([,.;:!?])/g, '$1')
+    .replace(/\s+/g, ' ')
+    .replace(/^[\s,;:.-]+|[\s,;:-]+$/g, '')
+    .trim();
+}
+
+export const MAX_ADD_TASKS = 3;
+export const MAX_TASK_LABEL = 60;
+export const MAX_TASK_MINUTES = 60;
+
+const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+const clampInt = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, Math.round(v)));
+
+/** Whitelists kinds, clamps params and minutes, dedupes kinds, drops unknown task ids and no-op changes, caps added tasks. */
+export function sanitizeCustomParts(raw: unknown, tasks: Task[]): CustomParts {
+  const out: CustomParts = { situations: [], addTasks: [], taskMinutes: {} };
+  if (!isObj(raw)) return out;
+  const seen = new Set<SituationKind>();
+  for (const s of Array.isArray(raw.situations) ? raw.situations : []) {
+    if (!isObj(s) || typeof s.kind !== 'string' || !Object.hasOwn(SITUATIONS, s.kind)) continue;
+    const kind = s.kind as SituationKind;
+    if (seen.has(kind)) continue;
+    seen.add(kind);
+    out.situations.push({ kind, param: clampParam(kind, s.param as number) });
+  }
+  for (const a of Array.isArray(raw.addTasks) ? raw.addTasks : []) {
+    if (out.addTasks.length >= MAX_ADD_TASKS) break;
+    if (!isObj(a) || typeof a.label !== 'string' || !isNum(a.minutes)) continue;
+    const label = withoutNumbers(a.label).slice(0, MAX_TASK_LABEL).trim();
+    if (!label) continue;
+    out.addTasks.push({ label, minutes: clampInt(a.minutes, 1, MAX_TASK_MINUTES) });
+  }
+  if (isObj(raw.taskMinutes)) {
+    const byId = new Map(tasks.map((t) => [t.id, t]));
+    for (const [id, m] of Object.entries(raw.taskMinutes)) {
+      const t = byId.get(id);
+      if (!t || !isNum(m)) continue;
+      const minutes = clampInt(m, 0, MAX_TASK_MINUTES);
+      if (minutes !== t.minutes) out.taskMinutes[id] = minutes;
+    }
+  }
+  return out;
+}
+
+/**
+ * A typed task change is stored as absolute minutes against the household's own tasks. When the
+ * task list changes (Fix screen), scale it by the same ratio: help 6 -> 10 typed, Fix help 6 -> 2,
+ * gives help 3 on the after run (the same as the "a third" next action measured on the row).
+ * Removed tasks (0) stay removed; a task the Fix removed (0) is removed here too.
+ */
+export function rebaseCustomParts(parts: CustomParts, baseTasks: Task[], nowTasks: Task[]): CustomParts {
+  const base = new Map(baseTasks.map((t) => [t.id, t.minutes]));
+  const now = new Map(nowTasks.map((t) => [t.id, t.minutes]));
+  let taskMinutes: Record<string, number> | null = null;
+  for (const [id, m] of Object.entries(parts.taskMinutes)) {
+    const b = base.get(id);
+    const n = now.get(id);
+    if (b === undefined || n === undefined || b === n || m === 0) continue;
+    taskMinutes ??= { ...parts.taskMinutes };
+    taskMinutes[id] = b <= 0 || n <= 0 ? n : clampInt(Math.max(1, (m * n) / b), 1, MAX_TASK_MINUTES);
+  }
+  return taskMinutes ? { ...parts, taskMinutes } : parts;
+}
+
+export function emptyParts(p: CustomParts): boolean {
+  return p.situations.length === 0 && p.addTasks.length === 0 && Object.keys(p.taskMinutes).length === 0;
+}
+
+/** Plain words for one part, starting lower case, no final period. */
+function partWords(prepared: PreparedForDrill, kind: SituationKind, p: number): string {
+  const v = fmtParam(p);
+  switch (kind) {
+    case 'night':
+      return `the fire starts at night, and waking everyone takes ${v} min`;
+    case 'late_order':
+      return `leave ${v} min after the fire starts, when the order comes`;
+    case 'adult_away':
+      return `one adult is away, so gathering, helping, pets and loading take ${v} times longer`;
+    case 'no_car':
+      return `the car is not available, so reaching a ride takes ${v} min`;
+    case 'slow_traffic':
+      return `traffic or smoke makes every road take ${v} times longer to drive`;
+    case 'road_blocked': {
+      const t = (blockedText(prepared) || 'The main route is blocked from the start, so you take the backup route.').replace(/\.$/, '');
+      return /^(A |Part |The )/.test(t) ? t[0].toLowerCase() + t.slice(1) : t;
+    }
+    case 'pet_hides':
+      return `a pet hides, and finding it takes ${v} extra min`;
+  }
+}
+
+/** One sentence listing every part, e.g. "Leave 20 min after...; added task: Hitch the horse trailer (15 min)." */
+function customAssumption(prepared: PreparedForDrill, parts: CustomParts, tasks: Task[]): string {
+  const words = parts.situations.map((s) => partWords(prepared, s.kind, s.param));
+  for (const t of tasks) {
+    if (!Object.hasOwn(parts.taskMinutes, t.id)) continue;
+    const m = parts.taskMinutes[t.id];
+    words.push(m === 0 ? `skip: ${t.label}` : `${t.label} takes ${m} min`);
+  }
+  for (const a of parts.addTasks) words.push(`added task: ${a.label} (${a.minutes} min)`);
+  if (words.length === 0) return 'Nothing changes from this drill.';
+  const s = words.join('; ');
+  return `${s[0].toUpperCase()}${s.slice(1)}.`;
+}
 function bestAction(ctx: Ctx, situationMargin: number, candidates: Candidate[]): NextAction | null {
   let best: NextAction | null = null;
   for (const c of candidates) {
@@ -439,35 +641,89 @@ function bestAction(ctx: Ctx, situationMargin: number, candidates: Candidate[]):
   return best;
 }
 
-export function runSituations(prepared: PreparedForDrill, base: DrillRun, tasks: Task[], specs: SituationSpec[]): SituationResult[] {
-  const ctx: Ctx = { prepared, base, points: null, scaled: new Map() };
-  const baseMargin = base.main ? marginOf(base.main) : null;
-  return specs.map((raw) => {
-    const spec: SituationSpec = { ...raw, param: clampParam(raw.kind, raw.param) };
-    const { info, scenario, candidates } = build(ctx, spec, tasks);
-    const { tasksMin, departMin, run } = evaluate(ctx, scenario);
-    if (!run) {
-      return { spec, info, tasks: scenario.tasks, tasksMin, departMin, route: null, run: null, outcome: 'no_route', marginMin: null, deltaMin: null, nextAction: null };
-    }
-    const marginMin = marginOf(run);
-    return {
-      spec,
-      info,
-      tasks: scenario.tasks,
-      tasksMin,
-      departMin,
-      route: scenario.route,
-      run,
-      outcome: run.outcome,
-      marginMin,
-      deltaMin: baseMargin === null ? null : diff(marginMin, baseMargin),
-      nextAction: bestAction(ctx, marginMin, candidates),
-    };
-  });
+function newCtx(prepared: PreparedForDrill, base: DrillRun): Ctx {
+  return { prepared, base, points: null, scaled: new Map() };
 }
 
-/** Count for headlines: results that are not short and have a route. */
-export function passCount(results: SituationResult[]): { pass: number; total: number } {
-  const pass = results.filter((r) => r.outcome !== 'short' && r.outcome !== 'no_route').length;
-  return { pass, total: results.length };
+/** Runs the scenario on the fixed fire and measures the next action. Shared by catalog and custom rows. */
+function finish(ctx: Ctx, spec: SituationSpec, info: SituationInfo, scenario: Scenario, candidates: Candidate[]): SituationResult {
+  const baseMargin = ctx.base.main ? marginOf(ctx.base.main) : null;
+  const { tasksMin, departMin, run } = evaluate(ctx, scenario);
+  if (!run) {
+    return { spec, info, tasks: scenario.tasks, tasksMin, departMin, route: null, run: null, outcome: 'no_route', marginMin: null, deltaMin: null, nextAction: null };
+  }
+  const marginMin = marginOf(run);
+  return {
+    spec,
+    info,
+    tasks: scenario.tasks,
+    tasksMin,
+    departMin,
+    route: scenario.route,
+    run,
+    outcome: run.outcome,
+    marginMin,
+    deltaMin: baseMargin === null ? null : diff(marginMin, baseMargin),
+    nextAction: bestAction(ctx, marginMin, candidates),
+  };
+}
+
+function runCatalog(ctx: Ctx, raw: SituationSpec, tasks: Task[]): SituationResult {
+  const spec: SituationSpec = { ...raw, param: clampParam(raw.kind, raw.param) };
+  const parts: CustomParts = { situations: [{ kind: spec.kind, param: spec.param }], addTasks: [], taskMinutes: {} };
+  const { scenario, candidates } = applyEffects(ctx, parts, tasks, false);
+  let info = SITUATIONS[spec.kind];
+  if (spec.kind === 'road_blocked') {
+    const text = blockedText(ctx.prepared);
+    if (text) info = { ...info, assumption: () => text };
+  }
+  return finish(ctx, spec, info, scenario, candidates);
+}
+
+function runCustom(ctx: Ctx, tasks: Task[], custom: CustomSituation): SituationResult {
+  const parts = sanitizeCustomParts(custom.parts, tasks);
+  const clean: CustomSituation = { ...custom, parts };
+  // spec/info kind is only a type filler: screens must check `custom` first.
+  const kind: SituationKind = parts.situations[0]?.kind ?? 'night';
+  const sentence = customAssumption(ctx.prepared, parts, tasks);
+  const info: SituationInfo = {
+    kind,
+    title: custom.title.trim() || 'Your situation',
+    paramUnit: 'min',
+    paramLabel: '',
+    defaultParam: 0,
+    minParam: 0,
+    maxParam: 0,
+    assumption: () => sentence,
+  };
+  const spec: SituationSpec = { kind, param: 0, source: 'ai' };
+  const { scenario, candidates } = applyEffects(ctx, parts, tasks, true);
+  return { ...finish(ctx, spec, info, scenario, candidates), custom: clean };
+}
+
+export function runSituations(prepared: PreparedForDrill, base: DrillRun, tasks: Task[], specs: SituationSpec[]): SituationResult[] {
+  const ctx = newCtx(prepared, base);
+  return specs.map((raw) => runCatalog(ctx, raw, tasks));
+}
+
+/**
+ * Applies ALL parts of a custom situation together on the same fire (no new fire simulation).
+ * The result carries `custom` (with sanitized parts); its `info` is synthetic: title = custom.title,
+ * assumption = one sentence listing every part.
+ */
+export function runCustomSituation(prepared: PreparedForDrill, base: DrillRun, tasks: Task[], custom: CustomSituation): SituationResult {
+  return runCustom(newCtx(prepared, base), tasks, custom);
+}
+
+/** Several custom rows sharing one closure-point / scaled-graph cache. */
+export function runCustomSituations(prepared: PreparedForDrill, base: DrillRun, tasks: Task[], customs: CustomSituation[]): SituationResult[] {
+  const ctx = newCtx(prepared, base);
+  return customs.map((c) => runCustom(ctx, tasks, c));
+}
+
+/** Count for headlines: results that are not short and have a route. Custom rows can be passed as a second list. */
+export function passCount(results: SituationResult[], custom: SituationResult[] = []): { pass: number; total: number } {
+  const all = [...results, ...custom];
+  const pass = all.filter((r) => r.outcome !== 'short' && r.outcome !== 'no_route').length;
+  return { pass, total: all.length };
 }

@@ -64,3 +64,37 @@
 
 /* Plan screen list (prints dark on white through plan.css's .plan-result rules). */
 .sit-plan { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--s2); }
+
+/* Your own situations: rows in the table, and the typing block under it (kept quieter than the rows). */
+.sit-own-label { font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-2); }
+.sit-title .tag { vertical-align: 2px; margin-left: var(--s1); }
+.own-quote { display: block; margin-top: 2px; font-size: 13px; color: var(--ink-2); font-style: italic; overflow-wrap: anywhere; }
+.sit-own-actions { display: flex !important; gap: var(--s3); margin-top: var(--s1); flex-wrap: wrap; }
+.sit button.own-link { min-height: 32px; padding: 0 var(--s1); border: 0; background: none; color: var(--ink-2); font-size: 13px; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+.sit button.own-link:hover { color: var(--ink); background: none; }
+
+.own { display: flex; flex-direction: column; gap: var(--s2); padding-top: var(--s4); border-top: 1px solid var(--line-soft); min-width: 0; }
+.own h3 { margin: 0; font-size: 16px; }
+.own p { margin: 0; }
+.own-form { display: flex; flex-direction: column; gap: var(--s1); min-width: 0; }
+.own-inputrow { display: flex; gap: var(--s2); flex-wrap: wrap; min-width: 0; }
+.own-inputrow input[type=text], .own-inputrow select { flex: 1 1 240px; min-width: 0; }
+.own-inputrow button { flex: none; }
+.own-chips { display: flex; gap: var(--s2); flex-wrap: wrap; }
+.sit button.own-chip { min-height: 36px; padding: var(--s1) var(--s3); border-radius: 99px; font-size: 13px; font-weight: 500; text-align: left; white-space: normal; max-width: 100%; }
+.own-wait { display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; font-size: 14px; }
+.own-note, .own-down { font-size: 14px; color: var(--ink-2); display: flex; flex-direction: column; gap: var(--s1); }
+.own-pick { display: flex; flex-direction: column; gap: var(--s1); margin-top: var(--s2); }
+.own-pick label { font-size: 14px; }
+
+.own-card { border: 1px solid var(--line-soft); border-radius: var(--r-lg, 16px); background: var(--panel); padding: var(--s3) var(--s4); display: flex; flex-direction: column; gap: var(--s2); min-width: 0; }
+.own-card-h { font-weight: 700; display: flex; align-items: center; gap: var(--s2); }
+.own-title { display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; font-size: 14px; }
+.own-title input[type=text] { flex: 1 1 200px; min-width: 0; }
+.own-parts { margin: 0; padding-left: var(--s4); display: flex; flex-direction: column; gap: var(--s2); }
+.own-parts li { line-height: 1.7; color: var(--ink-2); }
+.own-parts li .own-part-text { color: var(--ink); }
+.own-parts li .tag { margin-left: var(--s1); }
+.own-cannot { font-size: 14px; color: var(--ink-2); }
+@media (pointer: coarse) { .sit button.own-link, .sit button.own-chip { min-height: 44px; } }
+.own-down { align-items: flex-start; }

@@ -108,6 +108,57 @@ export async function requestSituations(body: SituationsRequest, signal?: AbortS
   }
 }
 
+// ---------- Describe your own situation (the AI only maps the text to the drill's levers) ----------
+
+/** What the situation reader gets: the typed text, counts, task names and minutes, the kinds it may use. No address or coordinates. */
+export interface InterpretRequest {
+  text: string;
+  household: { adults: number; children: number; needHelpMoving: number; dogs: number; catsAndSmallPets: number; cars: number };
+  tasks: { id: string; label: string; minutes: number }[];
+  available: { kind: string; title: string; minParam: number; maxParam: number; defaultParam: number }[];
+}
+
+export interface InterpretResponse {
+  status: 'ok' | 'unmeasurable' | 'fallback';
+  title: string;
+  /** Raw parts as the server sent them; the engine's sanitizeCustomParts makes them safe to run. */
+  parts: { situations: { kind: string; param: number }[]; addTasks: { label: string; minutes: number }[]; taskMinutes: Record<string, number> };
+  cannotModel: string;
+  /** True when the server made the title from the user's own text (not AI-written). */
+  titleFromText?: boolean;
+  note?: string;
+}
+
+const NO_PARTS: InterpretResponse['parts'] = { situations: [], addTasks: [], taskMinutes: {} };
+
+/** Never throws: a network or server error, or a cancel, reads as a fallback answer. */
+export async function requestInterpretSituation(body: InterpretRequest, signal?: AbortSignal): Promise<InterpretResponse> {
+  try {
+    const res = await getJson<Partial<InterpretResponse>>('/api/interpret-situation', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal,
+    });
+    const status = res?.status === 'ok' || res?.status === 'unmeasurable' ? res.status : 'fallback';
+    const p = res?.parts;
+    return {
+      status,
+      title: typeof res?.title === 'string' ? res.title : '',
+      parts: {
+        situations: Array.isArray(p?.situations) ? p.situations : [],
+        addTasks: Array.isArray(p?.addTasks) ? p.addTasks : [],
+        taskMinutes: p?.taskMinutes && typeof p.taskMinutes === 'object' && !Array.isArray(p.taskMinutes) ? p.taskMinutes : {},
+      },
+      cannotModel: typeof res?.cannotModel === 'string' ? res.cannotModel : '',
+      ...(res?.titleFromText === true ? { titleFromText: true } : {}),
+      note: typeof res?.note === 'string' ? res.note : undefined,
+    };
+  } catch {
+    return { status: 'fallback', title: '', parts: NO_PARTS, cannotModel: '', note: 'Could not reach the situation reader.' };
+  }
+}
+
 // ---------- Reference layer (real fires near home; never part of the drill) ----------
 
 export interface RefPerimeter {
