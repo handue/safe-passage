@@ -60,12 +60,15 @@ export function HowMadeScreen() {
     <main className="narrow">
       <div className="stack">
         <h1>How this plan was made</h1>
-        <p>Three kinds of information appear in Safe Passage:</p>
+        <p>Four kinds of information appear in Safe Passage:</p>
         <p>
           <Tag kind="calc" /> worked out by code from data.
         </p>
         <p>
           <Tag kind="est" /> a number you gave or accepted.
+        </p>
+        <p>
+          <Tag kind="timed" /> task minutes you measured with the app's stopwatch ("Time it for real"), rounded to the nearest minute.
         </p>
         <p>
           <Tag kind="ai" /> wording by a language model. It does not set times or routes.
@@ -116,7 +119,7 @@ export function HowMadeScreen() {
               </tr>
               <tr>
                 <td>Routes around the practice fire</td>
-                <td>Our own shortest-time routing on the OpenStreetMap road graph, run in your browser. No traffic.</td>
+                <td>Our own shortest-time routing on the OpenStreetMap road graph, run in your browser. Free-flow speeds; evacuation traffic is shown as a slowdown you set.</td>
                 <td className="muted">{area ? 'calculated here' : none}</td>
               </tr>
               <tr>
@@ -236,7 +239,12 @@ export function HowMadeScreen() {
           <b>Time to spare:</b> the minute that point closes, minus time needed.
         </p>
         <p>
-          <b>Other situations:</b> the same simulated fire, with the day going differently (a late order, a blocked road, slow traffic and so on). No new fire is
+          <b>How sure is this:</b> the fire model uses random draws, so the app runs the same fire (same start, wind and day or night) 15 times with other
+          random draws and shows the range of time to spare. Run 1 is the run on screen. It also runs your plan on each of those fires with evacuation
+          traffic: every road takes longer to drive, by a value you can change (starting guess 1.5 times). That is a simple slowdown, not a traffic model.
+        </p>
+        <p>
+          <b>Other situations:</b> the same simulated fire, with the day going differently (a late order, a blocked road, a pet that hides and so on). No new fire is
           simulated. The times and each next action's effect are calculated. The AI (muse-spark-1.3) only picks which situations to show and writes the one-line
           reasons; without it, fixed rules pick them. The values in each situation, like how late the order comes, are starting guesses you can change.
           A situation you type is sent to the AI only to turn it into the drill's levers (a listed situation, an added task or changed task minutes). The times
@@ -250,7 +258,7 @@ export function HowMadeScreen() {
           <li>The order to leave reaches you the moment the fire starts. Real orders can come later.</li>
           <li>Household tasks happen one after another.</li>
           <li>Wind speed and direction stay the same for the whole drill.</li>
-          <li>Cars drive at the OpenStreetMap speed limit, or a default for the road type, with no traffic.</li>
+          <li>Cars drive at the OpenStreetMap speed limit, or a default for the road type. Evacuation traffic is only a slowdown you set; there are no queues.</li>
           <li>A night drill adds a wake-up task. The fire spreads the same way.</li>
           <li>A drill runs for {state.before ? Math.round(state.before.fire.horizonMin / 60) : 3} hours of simulated time.</li>
         </ul>
@@ -260,7 +268,7 @@ export function HowMadeScreen() {
         <h2>What this model leaves out</h2>
         <ul>
           <li>Vegetation, fuel moisture, humidity, embers jumping ahead, and firefighting.</li>
-          <li>Traffic, crashes, smoke on the road, and downed power lines.</li>
+          <li>Real traffic (queues at junctions, everyone on the same road), crashes, smoke on the road, and downed power lines.</li>
           <li>Wind changes during a drill.</li>
           <li>Whether a destination is open or has room.</li>
           <li>

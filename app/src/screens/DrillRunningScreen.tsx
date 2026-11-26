@@ -4,7 +4,7 @@ import { useApp } from '../app/state';
 import { go } from '../app/router';
 import { MapView } from '../ui/MapView';
 import { Icon } from '../ui/Icon';
-import { Tag, fmtT } from '../ui/Tag';
+import { Tag, TaskTags, fmtT } from '../ui/Tag';
 import { NIGHT_WAKE_MIN, destTitle, displayDiffMin, displayMin } from '../engine/drill';
 import type { XY } from '../engine/types';
 import { fmtSpeed, localizeKm, unitsFor } from '../ui/units';
@@ -296,7 +296,7 @@ export function DrillRunningScreen() {
         )}
 
         <div className="household-now">
-          <h3>Your household now <Tag kind="est" /></h3>
+          <h3>Your household now <TaskTags tasks={state.household.tasks} /></h3>
           <ul className="list" ref={listRef}>
             {timeline.map((t) => {
               const done = minute >= t.endMin;

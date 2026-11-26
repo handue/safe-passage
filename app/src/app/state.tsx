@@ -5,7 +5,8 @@ import { prepareArea, type PreparedArea } from '../engine/area';
 import { defaultTasks, runDrill, type DrillRun } from '../engine/drill';
 import { suggestIgnitions, type IgnitionSuggestion } from '../engine/ignition';
 import { requestSituations, type PlanResponse, type SituationsResponse } from './api';
-import { applicableKinds, clampParam, defaultSituations, emptyParts, sanitizeCustomParts, type CustomParts, type CustomSituation, type SituationKind, type SituationSpec } from '../engine/situations';
+import { autoPickKinds, clampParam, defaultSituations, emptyParts, sanitizeCustomParts, type CustomParts, type CustomSituation, type SituationKind, type SituationSpec } from '../engine/situations';
+import { EVAC_TRAFFIC_SCALE } from '../engine/spread';
 import { MAX_CUSTOM, buildSituationsRequest, situationsKey, specsFromResponse, withEditedParams, type EditedParams } from './situations';
 
 export type LoadStep = { label: string; state: 'done' | 'working' | 'waiting' };
@@ -50,6 +51,8 @@ export interface AppState {
   situations: SituationsState;
   /** Situations the user described or picked, for the current drill (same key as situations). At most 5. */
   customSituations: CustomSituation[];
+  /** Evacuation traffic shown with every result: every road takes this many times longer (the household's value). */
+  trafficScale: number;
 }
 
 export interface SituationsState {
@@ -105,6 +108,7 @@ export function initialState(): AppState {
     entry: { query: '', choices: null, matched: null },
     situations: NO_SITUATIONS,
     customSituations: [],
+    trafficScale: EVAC_TRAFFIC_SCALE,
   };
 }
 
@@ -126,6 +130,7 @@ export type Action =
   | { type: 'custom/add'; custom: CustomSituation }
   | { type: 'custom/edit'; id: string; parts?: CustomParts; title?: string; titleSource?: 'ai' | 'user'; partsEdited?: boolean }
   | { type: 'custom/remove'; id: string }
+  | { type: 'traffic/set'; scale: number }
   | { type: 'reset' };
 
 /** Route shape in local XY for drawing and for ignition suggestions. */
@@ -140,7 +145,8 @@ function suggest(prepared: PreparedArea, wind: Wind): IgnitionSuggestion[] {
 
 /** Household tasks with the chosen fixes applied. */
 export function fixedTasks(tasks: Task[], fixes: Fixes): Task[] {
-  return tasks.map((t) => (fixes.taskMinutes[t.id] !== undefined ? { ...t, minutes: fixes.taskMinutes[t.id] } : t));
+  // A changed task's minutes are the household's guess for after the change, so they are an estimate again.
+  return tasks.map((t) => (fixes.taskMinutes[t.id] !== undefined ? { ...t, minutes: fixes.taskMinutes[t.id], source: 'estimate' as const } : t));
 }
 
 export function swappedWaysOut(w: WaysOut): WaysOut {
@@ -164,7 +170,7 @@ function runAfter(s: AppState): DrillRun | null {
 function reducer(s: AppState, a: Action): AppState {
   switch (a.type) {
     case 'load/start':
-      return { ...initialState(), household: s.household, entry: s.entry, load: { status: 'loading', steps: a.steps.map((label, i) => ({ label, state: i === 0 ? 'working' : 'waiting' })) } };
+      return { ...initialState(), household: s.household, entry: s.entry, trafficScale: s.trafficScale, load: { status: 'loading', steps: a.steps.map((label, i) => ({ label, state: i === 0 ? 'working' : 'waiting' })) } };
     case 'load/step':
       return { ...s, load: { ...s.load, steps: s.load.steps.map((st, i) => ({ ...st, state: i < a.index ? 'done' : i === a.index ? 'working' : 'waiting' })) } };
     case 'load/error':
@@ -225,7 +231,7 @@ function reducer(s: AppState, a: Action): AppState {
     case 'situations/done': {
       if (a.key !== s.situations.key || !s.prepared || !s.before) return s;
       const rules = defaultSituations(s.household, s.prepared, s.before);
-      const picked = specsFromResponse(a.response, applicableKinds(s.household, s.prepared, s.before), rules);
+      const picked = specsFromResponse(a.response, autoPickKinds(s.household, s.prepared, s.before), rules);
       return { ...s, situations: { ...s.situations, status: 'ready', ...picked } };
     }
     case 'situations/param': {
@@ -252,6 +258,10 @@ function reducer(s: AppState, a: Action): AppState {
     }
     case 'custom/remove':
       return { ...s, customSituations: s.customSituations.filter((c) => c.id !== a.id) };
+    case 'traffic/set': {
+      if (!Number.isFinite(a.scale)) return s;
+      return { ...s, trafficScale: clampParam('slow_traffic', a.scale) };
+    }
     case 'reset':
       // A fresh drill, but the typed address stays so the user can come back to it.
       return { ...initialState(), entry: s.entry };
@@ -275,7 +285,7 @@ function useSituationPicks(state: AppState, dispatch: Dispatch<Action>): void {
     const controller = new AbortController();
     sitAbort = controller;
     sitInflightKey = key;
-    const body = buildSituationsRequest(household, household.tasks, before, applicableKinds(household, prepared, before));
+    const body = buildSituationsRequest(household, household.tasks, before, autoPickKinds(household, prepared, before));
     void requestSituations(body, controller.signal).then((response) => {
       if (sitInflightKey !== key) return;
       sitInflightKey = null;

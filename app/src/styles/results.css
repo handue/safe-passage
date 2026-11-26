@@ -50,3 +50,11 @@ h1 .sample { font-family: "Barlow", system-ui, sans-serif; }
 @media (pointer: coarse), (max-width: 900px) {
   .how .row a, .side > a:not(.btn) { display: inline-flex; align-items: center; min-height: 44px; }
 }
+
+/* How sure is this? Fire runs, evacuation traffic, timed tasks */
+.firm { display: flex; flex-direction: column; gap: var(--s3); }
+.firm h2 { margin: 0; }
+.firm-list { margin: 0; padding-left: var(--s5); display: flex; flex-direction: column; gap: var(--s3); }
+.firm-list .sit-param { width: 4.5em; }
+.firm p { margin: 0; }
+.firm-line { margin: 0; }

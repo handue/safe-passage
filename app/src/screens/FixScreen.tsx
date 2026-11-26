@@ -1,11 +1,11 @@
 // Screen 7: fix the plan. Same fire, new plan: the user picks changes (their own minute
 // estimates, or switching to the backup route) and the same fire runs again via fixes/set.
 import { useState } from 'react';
-import { useApp, type Fixes } from '../app/state';
+import { fixedTasks, useApp, type Fixes } from '../app/state';
 import { compareRuns, displayDiffMin, type DrillRun } from '../engine/drill';
 import type { RouteRun, Task } from '../engine/types';
 import { Icon } from '../ui/Icon';
-import { Tag, fmtMin, fmtT } from '../ui/Tag';
+import { Tag, TaskTags, fmtMin, fmtT } from '../ui/Tag';
 import { MapView, type MapViewProps } from '../ui/MapView';
 import { TimeBars, type TimeBar } from '../ui/TimeBars';
 import type { PreparedArea } from '../engine/area';
@@ -13,6 +13,7 @@ import { aDrive, capitalize, minShort, unitsFor } from '../ui/units';
 import { DemoChip, DrillProblem, ModelNotes, NavLink, barFor, destLabel, destinationFireText, endMin, fireCaptionFor, verdictOf, wayOutName, windText } from './ResultsScreen';
 import { changeText } from '../engine/situations';
 import { FixSituations } from './SituationsSection';
+import { FirmnessLine } from './FirmnessBox';
 import '../styles/results.css';
 import '../styles/fix.css';
 
@@ -198,12 +199,17 @@ export function FixScreen() {
         )}
       </div>
 
+      <div className="stack-s firm-lines">
+        <FirmnessLine label="Before" prepared={prepared} run={before} tasks={household.tasks} />
+        {shown && <FirmnessLine label="After" prepared={prepared} swap={fixes.switchMainRoute} run={shown} tasks={fixedTasks(household.tasks, fixes)} />}
+      </div>
+
       <div className="stack-s">
         <TimeBars
           bars={bars}
           note={
             <>
-              Minutes to get past the closure point <Tag kind="calc" /> Task minutes <Tag kind="est" />
+              Minutes to get past the closure point <Tag kind="calc" /> Task minutes <TaskTags tasks={fixedTasks(household.tasks, fixes)} />
             </>
           }
         />

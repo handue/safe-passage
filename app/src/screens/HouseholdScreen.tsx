@@ -1,11 +1,12 @@
 // Screen 2: who is leaving, and the tasks before the car can go (the user's own minute estimates).
-import { useEffect, useId, useState, type FormEvent } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { useApp } from '../app/state';
 import { go } from '../app/router';
 import { defaultTasks, NIGHT_WAKE_MIN, tasksMinutes, type HouseholdCounts } from '../engine/drill';
 import type { Household, Task } from '../engine/types';
 import { Tag, fmtMin } from '../ui/Tag';
 import { Icon } from '../ui/Icon';
+import { TaskTimer } from './TaskTimer';
 import '../styles/home.css';
 
 const MAX_COUNT = 20;
@@ -75,6 +76,8 @@ export function HouseholdScreen() {
   const [newLabel, setNewLabel] = useState('');
   const [newMin, setNewMin] = useState('5');
   const [addError, setAddError] = useState('');
+  const [timing, setTiming] = useState(false);
+  const timerButton = useRef<HTMLButtonElement>(null);
   const ids = useId();
 
   const save = (next: Household) => dispatch({ type: 'household/set', household: next });
@@ -85,7 +88,20 @@ export function HouseholdScreen() {
   };
   const setMinutes = (id: string, n: number) => {
     if (h.tasks.find((t) => t.id === id)?.minutes === n) return;
-    save({ ...h, tasks: h.tasks.map((t) => (t.id === id ? { ...t, minutes: n } : t)) });
+    // A typed number is an estimate again, even if the task was timed before.
+    save({ ...h, tasks: h.tasks.map((t) => (t.id === id ? { ...t, minutes: n, source: 'estimate' } : t)) });
+  };
+  const setTimed = (id: string, n: number) => {
+    save({ ...h, tasks: h.tasks.map((t) => (t.id === id ? { ...t, minutes: n, source: 'timed' } : t)) });
+  };
+  const openTimer = () => {
+    setTiming(true);
+    requestAnimationFrame(() => document.getElementById('timer-h')?.scrollIntoView({ behavior: 'smooth', block: 'center' }));
+  };
+  const closeTimer = () => {
+    setTiming(false);
+    // Back to the button that opened it, so keyboard users keep their place.
+    requestAnimationFrame(() => timerButton.current?.focus());
   };
   const removeTask = (id: string) => save({ ...h, tasks: h.tasks.filter((t) => t.id !== id) });
   const resetTasks = () => {
@@ -107,6 +123,7 @@ export function HouseholdScreen() {
   };
 
   const total = tasksMinutes(h.tasks, 'day');
+  const timedCount = h.tasks.filter((t) => t.source === 'timed').length;
   const night = tasksMinutes(h.tasks, 'night');
   const showReset = countsEdited && !sameTasks(h.tasks, suggested);
   const hasCustom = h.tasks.some((t) => t.id.startsWith('custom-'));
@@ -143,6 +160,8 @@ export function HouseholdScreen() {
             </div>
           )}
 
+          {timing && <TaskTimer tasks={h.tasks} onTimed={setTimed} onClose={closeTimer} />}
+
           <table className="home-tasks">
             <thead>
               <tr>
@@ -160,7 +179,7 @@ export function HouseholdScreen() {
                 <tr key={t.id}>
                   <td>{t.label}</td>
                   <td><WholeInput value={t.minutes} max={MAX_MINUTES} onValue={(n) => setMinutes(t.id, n)} aria-label={`Minutes: ${t.label}`} /></td>
-                  <td><Tag kind="est" /></td>
+                  <td><Tag kind={t.source === 'timed' ? 'timed' : 'est'} /></td>
                   <td><button type="button" className="home-remove" onClick={() => removeTask(t.id)} aria-label={`Remove task: ${t.label}`}>Remove</button></td>
                 </tr>
               ))}
@@ -190,7 +209,20 @@ export function HouseholdScreen() {
           <p className="muted">Sum of your tasks. <Tag kind="calc" /></p>
         </div>
         <p className="muted">At night, waking everyone adds {NIGHT_WAKE_MIN} min (a fixed app default): {fmtMin(night)} min in all. <Tag kind="calc" /></p>
-        <p>Not sure? Time yourself once at home and come back with real minutes.</p>
+        <div className="stack-s">
+          <p>
+            {h.tasks.length === 0
+              ? 'No tasks yet. Add a task to time it.'
+              : timedCount === 0
+              ? 'These minutes are guesses. Time each task once at home, with the stopwatch, to use real minutes.'
+              : timedCount === h.tasks.length
+                ? `All ${h.tasks.length} tasks timed.`
+                : `${timedCount} of ${h.tasks.length} tasks timed; the rest are estimates.`}
+          </p>
+          {!timing && h.tasks.length > 0 && (
+            <button type="button" ref={timerButton} onClick={openTimer}><Icon name="clock" /> Time it for real</button>
+          )}
+        </div>
         <button type="button" className="primary" onClick={() => go('map')}>Show my home map</button>
         <a href="#/address">Back to address</a>
       </aside>

@@ -13,6 +13,7 @@ import { fmtDist, fmtSpeed, unitsFor } from '../ui/units';
 import { DISCLAIMER } from '../ui/Shell';
 import { dataSources, wayOutName } from './ResultsScreen';
 import { PlanSituations } from './SituationsSection';
+import { FirmnessLine } from './FirmnessBox';
 import '../styles/plan.css';
 
 const ONE_WAY_OUT_MIN_M = 200; // same threshold the drill uses for the "one way out" bottleneck
@@ -488,6 +489,15 @@ export function PlanScreen() {
           <>
             <RunResult label={after ? 'Before your changes' : 'This drill'} run={before} ways={ways} />
             {after ? <RunResult label="After your changes" run={after} ways={ways} /> : <p className="small muted">No changes tried yet. <a className="noprint" href="#/fix">Fix the plan</a></p>}
+            {state.prepared && (
+              <FirmnessLine
+                label={after ? 'How sure, after your changes' : 'How sure'}
+                prepared={state.prepared}
+                run={after ?? before}
+                tasks={after ? fixedTasks(state.household.tasks, state.fixes) : state.household.tasks}
+                swap={!!after && state.fixes.switchMainRoute}
+              />
+            )}
             <p className="small muted">
               {after ? 'Same simulated fire for both' : 'Simulated fire'}: wind from the {compassName(wind.fromDeg)}, {fmtSpeed(wind.speedMph, units)} ({windSourceWord(wind, state.isDemo)}), {before.setup.start === 'night' ? 'night start' : 'day start'}. Assumes the order to leave comes when the fire starts.
             </p>
@@ -511,7 +521,7 @@ export function PlanScreen() {
         </div>
         <div className="how-cols">
           <div><Tag kind="calc" /><p>Routes, drive times, and the drill results.</p></div>
-          <div><Tag kind="est" /><p>Task minutes, your contact, and the meeting spot if you change it.</p></div>
+          <div><Tag kind="est" /><p>Task minutes you did not time, the traffic value, your contact, and the meeting spot if you change it.</p>{state.household.tasks.some((t) => t.source === 'timed') && <p><Tag kind="timed" /> Task minutes you timed with the stopwatch.</p>}</div>
           <div>
             {ai ? <Tag kind="ai" /> : data ? <b className="small">Fixed checklist</b> : <b className="small">{waiting ? 'Writing...' : 'Not written'}</b>}
             <p>
@@ -526,7 +536,7 @@ export function PlanScreen() {
           </div>
         </div>
         <p className="how-data">
-          Data: {sources || 'OpenStreetMap'}. Routing: our own fastest-time search on the OpenStreetMap roads, no traffic.
+          Data: {sources || 'OpenStreetMap'}. Routing: our own fastest-time search on the OpenStreetMap roads at free-flow speeds; evacuation traffic is a slowdown you set.
           {' '}The plan writer got road names, times, task names, destination types (like "D1 School") and household counts only. Tasks you added were sent as "Another task", and place names were added back here.
         </p>
         {area && area.fallbacksUsed.length > 0 && (

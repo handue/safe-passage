@@ -170,8 +170,16 @@ export function applicableKinds(h: HouseholdCounts, prepared: PreparedForDrill, 
 const RULES_ORDER: SituationKind[] = ['late_order', 'road_blocked', 'night', 'adult_away', 'pet_hides', 'slow_traffic', 'no_car'];
 const MAX_SITUATIONS = 6;
 
+/**
+ * Kinds the rules and the AI may pick on their own. Evacuation traffic is shown with every result
+ * (engine/spread.ts), so it is not picked again; the household can still type or pick it.
+ */
+export function autoPickKinds(h: HouseholdCounts, prepared: PreparedForDrill, base: DrillRun): SituationKind[] {
+  return applicableKinds(h, prepared, base).filter((k) => k !== 'slow_traffic');
+}
+
 export function defaultSituations(h: HouseholdCounts, prepared: PreparedForDrill, base: DrillRun): SituationSpec[] {
-  const ok = new Set(applicableKinds(h, prepared, base));
+  const ok = new Set(autoPickKinds(h, prepared, base));
   return RULES_ORDER.filter((k) => ok.has(k))
     .slice(0, MAX_SITUATIONS)
     .map((kind) => ({ kind, param: SITUATIONS[kind].defaultParam, source: 'rules' as const }));
@@ -643,6 +651,16 @@ function bestAction(ctx: Ctx, situationMargin: number, candidates: Candidate[]):
 
 function newCtx(prepared: PreparedForDrill, base: DrillRun): Ctx {
   return { prepared, base, points: null, scaled: new Map() };
+}
+
+/**
+ * The main route on base's fire with every road taking k times longer to drive (evacuation traffic).
+ * Same tasks and wake-up as the drill; no new fire is simulated.
+ */
+export function runWithDriveScale(prepared: PreparedForDrill, base: DrillRun, tasks: Task[], k: number): RouteRun | null {
+  const ctx = newCtx(prepared, base);
+  const wakeMin = base.setup.start === 'night' ? NIGHT_WAKE_MIN : 0;
+  return evaluate(ctx, { tasks, wakeMin, delayMin: 0, route: 'main', driveScale: k }).run;
 }
 
 /** Runs the scenario on the fixed fire and measures the next action. Shared by catalog and custom rows. */

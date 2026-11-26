@@ -72,6 +72,7 @@ legend { font-weight: 700; padding: 0; margin-bottom: var(--s2); }
 .tag.calc { border: 1px solid var(--ink); border-radius: 2px; }
 .tag.est { border: 1px dashed var(--ink); border-radius: 99px; }
 .tag.ai { border: 3px double var(--ink); border-radius: 2px; }
+.tag.timed { border: 2px solid var(--ink); border-radius: 99px; }
 .chip { border: 1px solid var(--line); border-radius: 99px; padding: 2px var(--s3); font-size: var(--t-xs); white-space: nowrap; }
 
 /* Lists */

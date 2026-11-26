@@ -13,6 +13,7 @@ import {
   CHANGE_TEXT,
   SITUATIONS,
   applicableKinds,
+  autoPickKinds,
   clampParam,
   defaultSituations,
   emptyParts,
@@ -237,6 +238,12 @@ describe('applicableKinds and defaultSituations', () => {
     expect(applicableKinds(HH, prepared, base)).toEqual(['night', 'late_order', 'adult_away', 'no_car', 'slow_traffic', 'road_blocked', 'pet_hides']);
   });
 
+  it('auto picks leave out slow_traffic, which is shown with every result; typed situations keep it', () => {
+    const { prepared, base } = setup();
+    expect(autoPickKinds(HH, prepared, base)).toEqual(['night', 'late_order', 'adult_away', 'no_car', 'road_blocked', 'pet_hides']);
+    expect(applicableKinds(HH, prepared, base)).toContain('slow_traffic');
+  });
+
   it('drops kinds that cannot apply', () => {
     const { prepared, base } = setup({ start: 'night' });
     const h = { ...HH, adults: 1, cars: 0, dogs: 0, catsAndSmallPets: 0 };
@@ -255,10 +262,10 @@ describe('applicableKinds and defaultSituations', () => {
   it('rules pick up to 6 in priority order with default params', () => {
     const { prepared, base } = setup();
     const d = defaultSituations(HH, prepared, base);
-    expect(d.map((s) => s.kind)).toEqual(['late_order', 'road_blocked', 'night', 'adult_away', 'pet_hides', 'slow_traffic']);
+    expect(d.map((s) => s.kind)).toEqual(['late_order', 'road_blocked', 'night', 'adult_away', 'pet_hides', 'no_car']);
     expect(d.every((s) => s.source === 'rules' && s.param === SITUATIONS[s.kind].defaultParam)).toBe(true);
     const small = defaultSituations({ ...HH, adults: 1, dogs: 0 }, prepared, base);
-    expect(small.map((s) => s.kind)).toEqual(['late_order', 'road_blocked', 'night', 'slow_traffic', 'no_car']);
+    expect(small.map((s) => s.kind)).toEqual(['late_order', 'road_blocked', 'night', 'no_car']);
   });
 });
 

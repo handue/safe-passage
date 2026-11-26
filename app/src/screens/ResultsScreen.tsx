@@ -10,11 +10,12 @@ import { NIGHT_WAKE_MIN, destTitle, displayDiffMin } from '../engine/drill';
 import { compassName } from '../engine/geo';
 import { UNNAMED_ROAD } from '../engine/graph';
 import { Icon, type IconName } from '../ui/Icon';
-import { Tag, fmtMin, fmtT } from '../ui/Tag';
+import { Tag, TaskTags, fmtMin, fmtT } from '../ui/Tag';
 import { MapView } from '../ui/MapView';
 import { TimeBars, type TimeBar } from '../ui/TimeBars';
 import { fmtSpeed, fmtSquare, localizeMiles, minLong, unitsFor, type Units } from '../ui/units';
 import { SituationsSection } from './SituationsSection';
+import { FirmnessBox } from './FirmnessBox';
 import '../styles/results.css';
 
 // ---------- Helpers shared with the Fix screen ----------
@@ -305,11 +306,13 @@ export function ResultsScreen() {
           <ModelNotes run={run} area={area} prepared={prepared} />
         </div>
 
+        <FirmnessBox prepared={prepared} run={run} tasks={household.tasks} />
+
         <div className="stack-s">
           <h2>Where the {fmtMin(end)} minutes go</h2>
           <TimeBars bars={[bar]} />
           <p className="barkey">
-            Task minutes <Tag kind="est" /> {b ? 'Drive to the closure point and closure time' : 'Drive to the destination'} <Tag kind="calc" />
+            Task minutes <TaskTags tasks={household.tasks} /> {b ? 'Drive to the closure point and closure time' : 'Drive to the destination'} <Tag kind="calc" />
           </p>
         </div>
 
@@ -345,7 +348,8 @@ export function ResultsScreen() {
             </div>
             <div>
               <Tag kind="est" />
-              <p>Minutes for each task at home, and the values in each other situation (starting guesses you can change).</p>
+              <p>Task minutes you did not time, the traffic value, and the values in each other situation (starting guesses you can change).</p>
+              {household.tasks.some((t) => t.source === 'timed') && <p><Tag kind="timed" /> Task minutes you timed with the stopwatch.</p>}
             </div>
             <div>
               <Tag kind="ai" />
@@ -372,7 +376,7 @@ export function ResultsScreen() {
                 <div className="grow">
                   <b>{bn.title}</b>
                   <div className="muted">
-                    {localizeMiles(bn.detail, units)} {bn.kind === 'longest_task' && <Tag kind="est" />}
+                    {localizeMiles(bn.detail, units)} {bn.kind === 'longest_task' && <TaskTags tasks={household.tasks.filter((t) => t.label === bn.detail).slice(0, 1)} />}
                   </div>
                 </div>
                 {bn.kind === 'longest_task' && bn.minutes !== undefined && <div className="val">{fmtMin(bn.minutes)} min</div>}

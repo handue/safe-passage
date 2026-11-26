@@ -118,7 +118,8 @@ export interface Task {
   id: string;
   label: string;
   minutes: number;
-  source: 'estimate';
+  /** estimate: a number the household typed or accepted. timed: measured with the app's stopwatch. */
+  source: 'estimate' | 'timed';
 }
 
 export interface Household {

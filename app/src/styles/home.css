@@ -69,3 +69,13 @@ input[aria-invalid="true"] { border-color: var(--short); }
   background: repeating-linear-gradient(45deg, rgba(201, 168, 255, .55) 0 1px, transparent 1px 5px),
     repeating-linear-gradient(-45deg, rgba(201, 168, 255, .55) 0 1px, transparent 1px 5px);
 }
+
+/* Time it for real: the stopwatch walk-through */
+.timer { display: flex; flex-direction: column; gap: var(--s3); }
+.timer h2 { margin: 0; }
+.timer-now { display: flex; flex-direction: column; gap: var(--s2); }
+.timer-now p { margin: 0; }
+.timer-task { font-size: var(--t-l); }
+.timer-clock { font-size: var(--t-2xl); font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: -.02em; line-height: 1; }
+.timer-log { font-size: var(--t-s); }
+.side button .icon { vertical-align: -3px; margin-right: var(--s1); }

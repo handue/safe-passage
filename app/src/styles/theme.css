@@ -70,7 +70,7 @@ input[type=radio]:checked { border: 6px solid var(--route); }
 
 /* Provenance tags and chips */
 .tag { letter-spacing: .04em; color: #d6e0ee; background: rgba(160, 185, 215, .1); }
-.tag.calc, .tag.est, .tag.ai { border-color: var(--line-strong); }
+.tag.calc, .tag.est, .tag.ai, .tag.timed { border-color: var(--line-strong); }
 .chip { border-color: var(--line); background: var(--fill-soft); padding-block: 4px; }
 .icon { color: var(--ink-2); }
 .list > li > .val { font-weight: 700; }

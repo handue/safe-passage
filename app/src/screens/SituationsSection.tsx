@@ -103,7 +103,7 @@ const paramText = (p: number) => String(Math.round(p * 10) / 10);
 // ---------- Pieces ----------
 
 /** A small number input inside a sentence. It keeps what is typed until blur, then shows the stored value. */
-function NumInput(props: { value: number; min: number; max: number; decimal?: boolean; label: string; onValue: (n: number) => void }) {
+export function NumInput(props: { value: number; min: number; max: number; decimal?: boolean; label: string; onValue: (n: number) => void }) {
   const { value, min, max, decimal, label, onValue } = props;
   const [draft, setDraft] = useState<string | null>(null);
   return (
