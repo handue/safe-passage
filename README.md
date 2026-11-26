@@ -2,6 +2,8 @@
 
 **Practice a wildfire where you live and work.** Safe Passage runs a practice wildfire around an address you choose (your home, your workplace, your kids' school) and checks whether your household gets out before the fire closes the road. Then it helps you fix the plan and test it again on the same fire.
 
+**▶ Demo video (2:59):** https://youtu.be/9VEp9KaGHhE
+
 > **Practice drill, not a live alert.** This is a simplified model for practice only, not for real emergency decisions. In a real fire, follow official alerts and local evacuation orders.
 
 ![Results on the demo address: 4 minutes to spare, and the range across 15 runs of the same fire](docs/results.jpg)
