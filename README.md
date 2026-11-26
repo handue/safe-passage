@@ -79,6 +79,7 @@ Real addresses tested: public buildings in Paradise, Malibu and Big Sur (Califor
 - **AI:** Meta Model API, `muse-spark-1.3`.
 - **Libraries:** React, Vite, TypeScript, d3-contour, Vitest, oxlint.
 - **Font:** Barlow by Jeremy Tribby (SIL Open Font License 1.1).
+- **Development tools:** built with help from Claude Code (Anthropic's AI coding assistant) for writing code, tests and review. The demo narration voice is Kokoro TTS (`af_heart`); the video was assembled with HyperFrames.
 
 ## Team
 
